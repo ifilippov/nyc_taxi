@@ -6,6 +6,7 @@
 #include <group_by.h>
 #include <print.h>
 #include <transform.h>
+#include <sort.h>
 
 #include <cmath>
 
@@ -67,21 +68,23 @@ std::shared_ptr<arrow::Table> taxi4(std::shared_ptr<arrow::Table> table) {
 	auto taxi4_table1 = transform<double, double, arrow::DoubleArray, arrow::DoubleBuilder>(taxi4_table, 11, round);
 	group *taxi4_group_by = group_by(taxi4_table1, {2, 10, 11});
 	aggregate_task taxi4_task = {count, 0};
-	// TODO sorting (ORDER BY)!!!
-	return aggregate_PARALLEL<arrow::Int64Type::c_type, arrow::Int64Array, arrow::Int64Builder>(taxi4_table1, taxi4_group_by, {&taxi4_task});
+	auto taxi4_table2 = aggregate_PARALLEL<arrow::Int64Type::c_type, arrow::Int64Array, arrow::Int64Builder>(taxi4_table1, taxi4_group_by, {&taxi4_task});
+	// numbers of columns (2) are completely different here
+	// TODO only by one column now
+	return sort(taxi4_table2, {2}); // Only one chunk for sort here, is not a good checking.
 }
 
 int main() {
-        printf("\nThread number: %d\n\n", arrow::GetCpuThreadPoolCapacity());
+	printf("\nThread number: %d\n\n", arrow::GetCpuThreadPoolCapacity());
 
-        auto table = load_csv("trips_xaa.csv", true);
+	auto table = load_csv("trips_xaa.csv", true);
 	//table = load_csv("trips_xaa.csv", false);
 
-        //  2 - pickup_datetime
-        // 10 - passenger count
-        // 11 - trip distance
-        // 19 - total amount
-        // 24 - cab type
+	//  2 - pickup_datetime
+	// 10 - passenger count
+	// 11 - trip distance
+	// 19 - total amount
+	// 24 - cab type
 
 	my_print(taxi1(table));
 	my_print(taxi2(table));
@@ -99,10 +102,17 @@ int main() {
    TODO stability:
 	handling nil values
 	assuming that chunks and arrays have the same lengths among all columns
-	change all C pointers to shared pointers 
+	change all C pointers to shared pointers
+	check where pointers can be changes to references
 
    TODO features:
 	transformation between multiple columns, do we need it?
 	transformation multiple columns in one function
 	aggregate should have vector of tasks with different template types
+
+   TODO quality:
+	filename to parameters
+	single thread load_csv to parameters
+	build system
+	readme
 */

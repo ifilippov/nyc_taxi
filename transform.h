@@ -38,7 +38,7 @@ std::shared_ptr<arrow::Table> transform(std::shared_ptr<arrow::Table> table, int
 	table->SetColumn(column_id, new_column, &new_table);
 
 	print_time(begin);
-        return new_table;
+	return new_table;
 }
 
 #endif

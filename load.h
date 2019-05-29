@@ -12,7 +12,7 @@
 //++++++++++++++++++++++++++++++
 
 std::shared_ptr<arrow::Table> load_csv(std::string path, bool threads) {
-        printf("TASK: loading CSV file using %s.\n", threads ? "multiple threads" : "single thread");
+	printf("TASK: loading CSV file using %s.\n", threads ? "multiple threads" : "single thread");
 	auto begin = std::chrono::steady_clock::now();
 
 	auto popt = arrow::csv::ParseOptions::Defaults();

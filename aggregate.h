@@ -5,6 +5,7 @@
 
 #include <group_by.h>
 #include <print.h>
+#include <util.h>
 
 //++++++++++++++++++++++++++++++
 // AGGREGATE
@@ -23,8 +24,8 @@ struct partial_aggregate_task {
 	int iterate;
 	std::shared_ptr<arrow::Field> field;
 	// mutable buffers?
-        std::vector<T> partial;
-        std::vector<T> partial1;
+	std::vector<T> partial;
+	std::vector<T> partial1;
 };
 
 template <typename T>
@@ -76,18 +77,6 @@ void aggregate_sequential(std::shared_ptr<T2> c, group *gb, partial_aggregate_ta
 }
 
 template <typename T, typename T4>
-void add_column(std::vector<std::shared_ptr<arrow::Column>> &clmns, std::vector<std::shared_ptr<arrow::Field>> &flds,
-	std::vector<T> values, std::shared_ptr<arrow::Field> field) {
-	T4 bld;
-	// TODO directly from mutable buffer?
-	bld.AppendValues(values); // bld.Append(values[j]) or bld.Resize(values.size()); bld.UnsafeAppend(values[j]);
-	std::shared_ptr<arrow::Array> data;
-	bld.Finish(&data);
-	clmns.push_back(std::make_shared<arrow::Column>(field->name(), data));
-	flds.push_back(field);
-}
-
-template <typename T, typename T4>
 std::shared_ptr<arrow::Table> aggregate_finalize(group *gb, std::vector<partial_aggregate_task<T>*> p_tasks) {
 	std::vector<std::shared_ptr<arrow::Column>> clmns;
 	std::vector<std::shared_ptr<arrow::Field>> flds;
@@ -112,21 +101,21 @@ std::shared_ptr<arrow::Table> aggregate_PARALLEL(std::shared_ptr<arrow::Table> t
 	printf("TASK: aggregating %ld columns %s.\n", tasks.size(), gb != NULL ? "based on group_by" : "to zero column (no group_by)");
 	auto begin = std::chrono::steady_clock::now();
 	std::vector<partial_aggregate_task<T>*> p_tasks;
-        for (int i = 0; i < tasks.size(); i++) {
+	for (int i = 0; i < tasks.size(); i++) {
 		p_tasks.push_back(new partial_aggregate_task<T>{tasks[i], 0, table->schema()->field(tasks[i]->from_column)});
-        }
-        for (int i = 0; i < tasks.size(); i++) {
-                for (int j = 0; j < table->column(tasks[i]->from_column)->data()->num_chunks(); j++) {
-                        auto c = std::dynamic_pointer_cast<T2>(table->column(tasks[i]->from_column)->data()->chunk(j));
-                        if (c == NULL) {
-                                printf("Type of %d column is wrong!\n", tasks[i]->from_column + 1);
-                        }
-                        aggregate_sequential<T, T2>(c, gb, p_tasks[i]);
-                }
-        }
-        auto new_table = aggregate_finalize<T, T4>(gb, p_tasks);
+	}
+	for (int i = 0; i < tasks.size(); i++) {
+		for (int j = 0; j < table->column(tasks[i]->from_column)->data()->num_chunks(); j++) {
+			auto c = std::dynamic_pointer_cast<T2>(table->column(tasks[i]->from_column)->data()->chunk(j));
+			if (c == NULL) {
+				printf("Type of %d column is wrong!\n", tasks[i]->from_column + 1);
+			}
+			aggregate_sequential<T, T2>(c, gb, p_tasks[i]);
+		}
+	}
+	auto new_table = aggregate_finalize<T, T4>(gb, p_tasks);
 	print_time(begin);
-        return new_table;
+	return new_table;
 }
 
 #endif
