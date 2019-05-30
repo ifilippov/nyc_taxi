@@ -3,7 +3,7 @@
 
 #include <arrow/api.h>
 
-int compare (std::shared_ptr<arrow::Array> a, int ai, std::shared_ptr<arrow::Array> b, int bi) {
+int compare(std::shared_ptr<arrow::Array> a, int ai, std::shared_ptr<arrow::Array> b, int bi) {
 	switch (a->type_id()) {
 	case arrow::Type::STRING: {
 		auto left = std::static_pointer_cast<arrow::StringArray>(a) -> GetString(ai);
@@ -50,15 +50,13 @@ T get_value(std::shared_ptr<T2> array, int i) {
 }
 
 template <typename T, typename T4>
-void add_column(std::vector<std::shared_ptr<arrow::Column>> &clmns, std::vector<std::shared_ptr<arrow::Field>> &flds,
-	std::vector<T> values, std::shared_ptr<arrow::Field> field) {
+std::shared_ptr<arrow::Array> vector_to_array(std::vector<T> values) {
 	T4 bld;
 	// TODO directly from mutable buffer?
 	bld.AppendValues(values); // bld.Append(values[j]) or bld.Resize(values.size()); bld.UnsafeAppend(values[j]);
 	std::shared_ptr<arrow::Array> data;
 	bld.Finish(&data);
-	clmns.push_back(std::make_shared<arrow::Column>(field->name(), data));
-	flds.push_back(field);
+	return data;
 }
 
 #endif

@@ -40,14 +40,14 @@ void print_time(std::chrono::steady_clock::time_point begin, std::string line) {
 }
 
 void print_time(std::chrono::steady_clock::time_point begin) {
-        std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
-        std::cout << "DONE! " <<
-                std::chrono::duration_cast<std::chrono::seconds>(end - begin).count() << " seconds / " <<
-                std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " milliseconds" << std::endl << std::endl;
+	std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+	std::cout << "DONE! " <<
+		std::chrono::duration_cast<std::chrono::seconds>(end - begin).count() << " seconds / " <<
+		std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " milliseconds" << std::endl << std::endl;
 }
 
 
-void my_print(std::shared_ptr<arrow::Table> table) {
+void print_table(std::shared_ptr<arrow::Table> table) {
 	int Nc = table->schema()->num_fields();
 	int Nr = table->num_rows();
 	printf("***RESULT***\n");
@@ -62,7 +62,7 @@ void my_print(std::shared_ptr<arrow::Table> table) {
 				printf("%10ld ", array->Value(i));
 			} else {
 				auto array = std::static_pointer_cast<arrow::DoubleArray>(c->chunk(0));
-				printf("%f ", array->Value(i));
+				printf("%10f ", array->Value(i));
 			}
 		}
 		printf("\n");

@@ -11,9 +11,16 @@
 // GROUP BY
 //++++++++++++++++++++++++++++++
 
-// Multiple columns
+// For both single and multiple columns
+struct group {
+	std::vector<int> redirection;
+	std::vector<std::shared_ptr<arrow::Column>> columns;
+	std::vector<std::shared_ptr<arrow::Field>> fields;
+};
+
+// For multiple columns
 struct position {
-	int row_index;
+	int row_index; // TODO like in sort? without array?
 	std::vector<std::shared_ptr<arrow::Array>> *arrays;
 	bool operator==(const position& other) const {
 		for (int i = 0; i < (*arrays).size(); i++) {
@@ -49,12 +56,6 @@ namespace std {
 	};
 };
 
-struct group {
-	std::vector<int> redirection;
-	std::vector<std::shared_ptr<arrow::Column>> columns;
-	std::vector<std::shared_ptr<arrow::Field>> fields;
-};
-
 struct partial_mult_group {
 	group *g;
 	int temp;
@@ -62,15 +63,7 @@ struct partial_mult_group {
 	std::vector<std::pair<int, int>> fast_build;
 };
 
-template <typename T, typename T4>
-struct partial_single_group {
-	group *g;
-	int temp;
-	T4 *bld;
-	std::unordered_map<T, int> map;
-};
-
-void group_by_sequential(std::vector<std::shared_ptr<arrow::Array>> *arrays, partial_mult_group* pg, int n) {
+void group_by_sequential_multiple(std::vector<std::shared_ptr<arrow::Array>> *arrays, partial_mult_group* pg, int n) {
 	for (int i = 0; i < (*arrays)[0]->length(); i++) {
 		position p{i, arrays}; // TODO copy constructor? move constructor?
 		auto number = pg->map.find(p);
@@ -85,7 +78,7 @@ void group_by_sequential(std::vector<std::shared_ptr<arrow::Array>> *arrays, par
 	}
 }
 
-group* group_by_PARALLEL(std::shared_ptr<arrow::Table> table, std::vector<int> column_ids) {
+group* group_by_parallel_multiple(std::shared_ptr<arrow::Table> table, std::vector<int> column_ids) {
 	printf("      Arrow is columnar database and this request is low performance\n");
 	printf("      There are two variants: prebuild caches or not. Executing _without_ prebuilding\n");
 	partial_mult_group pg = {new(group), 0};
@@ -96,7 +89,7 @@ group* group_by_PARALLEL(std::shared_ptr<arrow::Table> table, std::vector<int> c
 		for (int j = 0; j < column_ids.size(); j++) {
 			all_arrays[i].push_back(table->column(column_ids[j])->data()->chunk(i));
 		}
-		group_by_sequential(&(all_arrays[i]), &pg, i);
+		group_by_sequential_multiple(&(all_arrays[i]), &pg, i);
 	}
 
 	for (int i = 0; i < column_ids.size(); i++) {
@@ -129,9 +122,17 @@ group* group_by_PARALLEL(std::shared_ptr<arrow::Table> table, std::vector<int> c
 	return pg.g;
 }
 
-// Single column
+// For single column
+template <typename T, typename T4>
+struct partial_single_group {
+	group *g;
+	int temp;
+	T4 *bld;
+	std::unordered_map<T, int> map;
+};
+
 template <typename T, typename T2, typename T4>
-void group_by_sequential(std::shared_ptr<T2> array, partial_single_group<T, T4>* pg) {
+void group_by_sequential_single(std::shared_ptr<T2> array, partial_single_group<T, T4>* pg) {
 	for (int i = 0; i < array->length(); i++) {
 		T value = get_value<T, T2>(array, i);
 		auto number = pg->map.find(value);
@@ -146,43 +147,44 @@ void group_by_sequential(std::shared_ptr<T2> array, partial_single_group<T, T4>*
 	}
 }
 
-// For group_by by one column
-group* group_by_PARALLEL(std::shared_ptr<arrow::Table> table, int column_id) {
+template <typename T, typename T2, typename T4>
+group* group_by_parallel_single(std::shared_ptr<arrow::ChunkedArray> column, std::shared_ptr<arrow::Array>& data) {
+	T4 bld;
+	partial_single_group<T, T4> pg = {new(group), 0, &bld};
+	for (int i = 0; i < column->num_chunks(); i++) {
+		auto array = std::static_pointer_cast<T2>(column->chunk(i));
+		group_by_sequential_single<T, T2, T4>(array, &pg);
+	}
+	pg.bld->Finish(&data);
+	return pg.g;
+}
+
+group* group_by_dispatch(std::shared_ptr<arrow::Table> table, int column_id) {
 	std::shared_ptr<arrow::Field> field = table->schema()->field(column_id);
 	std::shared_ptr<arrow::Array> data;
+	std::shared_ptr<arrow::ChunkedArray> column = table->column(column_id)->data();
 	group* g;
-	if (table->column(column_id)->data()->type()->id() == arrow::Type::STRING) {
-		arrow::StringBuilder bld;
-		partial_single_group<std::string, arrow::StringBuilder> pg = {new(group), 0, &bld};
-		for (int i = 0; i < table->column(column_id)->data()->num_chunks(); i++) {
-			auto array = std::static_pointer_cast<arrow::StringArray>(table->column(column_id)->data()->chunk(i));
-			group_by_sequential<std::string, arrow::StringArray, arrow::StringBuilder>(array, &pg);
-		}
-		pg.bld->Finish(&data);
-		g = pg.g;
-	} else { // TODO no double here
-		arrow::Int64Builder bld;
-		partial_single_group<arrow::Int64Type::c_type, arrow::Int64Builder> pg = {new(group), 0, &bld};
-		for (int i = 0; i < table->column(column_id)->data()->num_chunks(); i++) {
-			auto array = std::static_pointer_cast<arrow::Int64Array>(table->column(column_id)->data()->chunk(i));
-			group_by_sequential<arrow::Int64Type::c_type, arrow::Int64Array, arrow::Int64Builder>(array, &pg);
-		}
-		pg.bld->Finish(&data);
-		g = pg.g;
+	if (column->type()->id() == arrow::Type::STRING) {
+		g = group_by_parallel_single<std::string, arrow::StringArray, arrow::StringBuilder>(column, data);
+	} else if (column->type()->id() == arrow::Type::INT64) {
+		g = group_by_parallel_single<arrow::Int64Type::c_type, arrow::Int64Array, arrow::Int64Builder>(column, data);
+	} else {
+		g = group_by_parallel_single<arrow::DoubleType::c_type, arrow::DoubleArray, arrow::DoubleBuilder>(column, data);
 	}
 	g->columns.push_back(std::make_shared<arrow::Column>(field->name(), data));
 	g->fields.push_back(field);
 	return g;
 }
 
+// Main function
 group* group_by(std::shared_ptr<arrow::Table> table, std::vector<int> column_ids) {
 	printf("TASK: grouping by %s. (building all group_by columns and NOT counting them)\n", column_ids.size() == 1 ? "single column" : "multiple columns");
 	auto begin = std::chrono::steady_clock::now();
 	group *g;
 	if (column_ids.size() == 1) {
-		g = group_by_PARALLEL(table, column_ids[0]);
+		g = group_by_dispatch(table, column_ids[0]);
 	} else  {
-		g = group_by_PARALLEL(table, column_ids);
+		g = group_by_parallel_multiple(table, column_ids);
 	}
 	print_time(begin);
 	return g;

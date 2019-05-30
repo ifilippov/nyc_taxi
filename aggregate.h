@@ -22,7 +22,6 @@ template <typename T>
 struct partial_aggregate_task {
 	aggregate_task *task;
 	int iterate;
-	std::shared_ptr<arrow::Field> field;
 	// mutable buffers?
 	std::vector<T> partial;
 	std::vector<T> partial1;
@@ -77,7 +76,30 @@ void aggregate_sequential(std::shared_ptr<T2> c, group *gb, partial_aggregate_ta
 }
 
 template <typename T, typename T4>
-std::shared_ptr<arrow::Table> aggregate_finalize(group *gb, std::vector<partial_aggregate_task<T>*> p_tasks) {
+std::shared_ptr<arrow::Array> aggregate_finalize(partial_aggregate_task<T> *p_task) {
+	if (p_task->task->type == average) {
+		for (int j = 0; j < p_task->partial.size(); j++) {
+			p_task->partial[j] = p_task->partial[j] / p_task->partial1[j];
+		}
+	}
+	return vector_to_array<T, T4>(p_task->partial);
+}
+
+template <typename T, typename T2, typename T4>
+std::shared_ptr<arrow::Array> aggregate_PARALLEL(std::shared_ptr<arrow::ChunkedArray> column, group *gb, aggregate_task *task) {
+	partial_aggregate_task<T> *p_task = new partial_aggregate_task<T>{task, 0};
+	for (int j = 0; j < column->num_chunks(); j++) {
+		auto c = std::static_pointer_cast<T2>(column->chunk(j));
+		aggregate_sequential<T, T2>(c, gb, p_task);
+	}
+	auto t = aggregate_finalize<T, T4>(p_task);
+	delete(p_task);
+	return t;
+}
+
+std::shared_ptr<arrow::Table> aggregate(std::shared_ptr<arrow::Table> table, group *gb, std::vector<aggregate_task*> tasks) {
+	printf("TASK: aggregating %ld columns %s.\n", tasks.size(), gb != NULL ? "based on group_by" : "to zero column (no group_by)");
+	auto begin = std::chrono::steady_clock::now();
 	std::vector<std::shared_ptr<arrow::Column>> clmns;
 	std::vector<std::shared_ptr<arrow::Field>> flds;
 	if (gb != NULL) {
@@ -85,35 +107,21 @@ std::shared_ptr<arrow::Table> aggregate_finalize(group *gb, std::vector<partial_
 		clmns = std::move(gb->columns);
 		flds = std::move(gb->fields);
 	}
-	for (int i = 0; i < p_tasks.size(); i++) {
-		if (p_tasks[i]->task->type == average) {
-			for (int j = 0; j < p_tasks[i]->partial.size(); j++) {
-				p_tasks[i]->partial[j] = p_tasks[i]->partial[j] / p_tasks[i]->partial1[j];
-			}
-		}
-		add_column<T, T4>(clmns, flds, p_tasks[i]->partial, p_tasks[i]->field);
-	}
-	return arrow::Table::Make(std::make_shared<arrow::Schema>(flds), clmns);
-}
-
-template <typename T, typename T2, typename T4>
-std::shared_ptr<arrow::Table> aggregate_PARALLEL(std::shared_ptr<arrow::Table> table, group *gb, std::vector<aggregate_task*> tasks) {
-	printf("TASK: aggregating %ld columns %s.\n", tasks.size(), gb != NULL ? "based on group_by" : "to zero column (no group_by)");
-	auto begin = std::chrono::steady_clock::now();
-	std::vector<partial_aggregate_task<T>*> p_tasks;
 	for (int i = 0; i < tasks.size(); i++) {
-		p_tasks.push_back(new partial_aggregate_task<T>{tasks[i], 0, table->schema()->field(tasks[i]->from_column)});
-	}
-	for (int i = 0; i < tasks.size(); i++) {
-		for (int j = 0; j < table->column(tasks[i]->from_column)->data()->num_chunks(); j++) {
-			auto c = std::dynamic_pointer_cast<T2>(table->column(tasks[i]->from_column)->data()->chunk(j));
-			if (c == NULL) {
-				printf("Type of %d column is wrong!\n", tasks[i]->from_column + 1);
-			}
-			aggregate_sequential<T, T2>(c, gb, p_tasks[i]);
+		auto column = table->column(tasks[i]->from_column);
+		std::shared_ptr<arrow::Array> data;
+		if (column->type()->id() == arrow::Type::STRING) {
+			// TODO data = aggregate_PARALLEL<std::string, arrow::StringArray, arrow::StringBuilder>(column->data(), gb, tasks[i]);
+		} else if (column->type()->id() == arrow::Type::INT64) {
+			data = aggregate_PARALLEL<arrow::Int64Type::c_type, arrow::Int64Array, arrow::Int64Builder>(column->data(), gb, tasks[i]);
+		} else {
+			data = aggregate_PARALLEL<arrow::DoubleType::c_type, arrow::DoubleArray, arrow::DoubleBuilder>(column->data(), gb, tasks[i]);
 		}
+		auto field = column->field();
+		clmns.push_back(std::make_shared<arrow::Column>(field->name(), data));
+		flds.push_back(field);
 	}
-	auto new_table = aggregate_finalize<T, T4>(gb, p_tasks);
+	auto new_table = arrow::Table::Make(std::make_shared<arrow::Schema>(flds), clmns);
 	print_time(begin);
 	return new_table;
 }
