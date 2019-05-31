@@ -10,10 +10,13 @@
 //++++++++++++++++++++++++++++++
 
 // For both: single and multiple columns
+enum sort_type {desc, asc};
+
 struct index123 {
 	int chunkI;
 	int elemI;
 	static std::vector<int> column_ids;
+	static std::vector<sort_type> t;
 	static std::shared_ptr<arrow::Table> table;
 };
 
@@ -52,28 +55,24 @@ std::shared_ptr<arrow::Table> sort_finalize(std::shared_ptr<arrow::Table> table,
 }
 
 // For multiple columns
-template <typename T>
-struct tuple {
-	T elem;
-	int chunkI;
-	int elemI;
-};
-
 std::vector<int> index123::column_ids;
+std::vector<sort_type> index123::t;
 std::shared_ptr<arrow::Table> index123::table;
+
 
 bool index123_compare(index123 a, index123 b) {
 	for (int i = 0; i < index123::column_ids.size(); i++) {
 		auto arrayA = index123::table->column(index123::column_ids[i])->data()->chunk(a.chunkI);
 		auto arrayB = index123::table->column(index123::column_ids[i])->data()->chunk(b.chunkI);
 		int result = compare(arrayA, a.elemI, arrayB, b.elemI);
+
 		if (result < 0) {
-			return true;//false;
+			return index123::t[i] == desc ? false : true;
 		} else if (result > 0) {
-			return false;//true;
+			return index123::t[i] == desc ? true : false;
 		}
 	}
-	return false;
+	return desc ? false : true;
 }
 
 std::vector<index123> *sort_sequential_multiple(int array_length, int chunk_number) {
@@ -86,9 +85,10 @@ std::vector<index123> *sort_sequential_multiple(int array_length, int chunk_numb
 	return result;
 }
 
-std::shared_ptr<arrow::Table> sort_parallel_multiple(std::shared_ptr<arrow::Table> table, std::vector<int> column_ids) {
+std::shared_ptr<arrow::Table> sort_parallel_multiple(std::shared_ptr<arrow::Table> table, std::vector<int> column_ids, std::vector<sort_type> t) {
 	printf("      Arrow is columnar database and this request is low performance\n");
 	index123::column_ids = column_ids;
+	index123::t = t;
 	index123::table = table;
 	std::vector<index123> *result = new std::vector<index123>(0);
 	for (int i = 0; i < table->column(column_ids[0])->data()->num_chunks(); i++) { // other columns are the same
@@ -99,37 +99,48 @@ std::shared_ptr<arrow::Table> sort_parallel_multiple(std::shared_ptr<arrow::Tabl
 		delete(addition);
 		result = new_result;
 	}
-	auto t = sort_finalize(table, result);
+	auto temp = sort_finalize(table, result);
 	delete(result);
-	return t;
+	return temp;
 }
 
 // For single column
 template <typename T>
-bool tuple_compare(tuple<T> a, tuple<T> b) {
+struct tuple {
+	T elem;
+	index123 index;
+};
+
+template <typename T>
+bool tuple_compare_desc(tuple<T> a, tuple<T> b) {
+	return a.elem > b.elem;
+}
+
+template <typename T>
+bool tuple_compare_asc(tuple<T> a, tuple<T> b) {
 	return a.elem < b.elem;
 }
 
 template <typename T, typename T2>
-std::vector<tuple<T>> *sort_sequential_single(std::shared_ptr<T2> array, int chunk_number) {
+std::vector<tuple<T>> *sort_sequential_single(std::shared_ptr<T2> array, int chunk_number, sort_type t) {
 	std::vector<tuple<T>> *result = new std::vector<tuple<T>>(array->length());
 	// TODO array_to_vector?
 	for (int i = 0; i < array->length(); i++) {
 		T value = get_value<T, T2>(array, i);
-		(*result)[i] = tuple<T>{value, chunk_number, i};
+		(*result)[i] = tuple<T>{value, index123{chunk_number, i}};
 	}
-	std::sort(result->begin(), result->end(), tuple_compare<T>);
+	std::sort(result->begin(), result->end(), t == desc ? tuple_compare_desc<T> : tuple_compare_asc<T>);
 	return result;
 }
 
 template <typename T, typename T2>
-std::vector<index123> *sort_parallel_single(std::shared_ptr<arrow::ChunkedArray> column) {
+std::vector<index123> *sort_parallel_single(std::shared_ptr<arrow::ChunkedArray> column, sort_type t) {
 	std::vector<tuple<T>> *result = new std::vector<tuple<T>>(0);
 	for (int i = 0; i < column->num_chunks(); i++) {
 		auto array = std::static_pointer_cast<T2>(column->chunk(i));
-		std::vector<tuple<T>> *addition = sort_sequential_single<T, T2>(array, i);
+		std::vector<tuple<T>> *addition = sort_sequential_single<T, T2>(array, i, t);
 		std::vector<tuple<T>> *new_result = new std::vector<tuple<T>>(result->size() + addition->size());
-		std::merge(result->begin(), result->end(), addition->begin(), addition->end(), new_result->begin(), tuple_compare<T>);
+		std::merge(result->begin(), result->end(), addition->begin(), addition->end(), new_result->begin(), t == desc ? tuple_compare_desc<T> : tuple_compare_asc<T>);
 		delete(result);
 		delete(addition);
 		result = new_result;
@@ -137,36 +148,36 @@ std::vector<index123> *sort_parallel_single(std::shared_ptr<arrow::ChunkedArray>
 	std::vector<index123> *r = new std::vector<index123>(result->size());
 	// TODO remove this
 	for (int i = 0; i < result->size(); i++) {
-		(*r)[i] = index123{(*result)[i].chunkI, (*result)[i].elemI};
+		(*r)[i] = (*result)[i].index;
 	}
 	delete(result);
 	return r;
 }
 
-std::shared_ptr<arrow::Table> sort_dispatch(std::shared_ptr<arrow::Table> table, int column_id) {
+std::shared_ptr<arrow::Table> sort_dispatch(std::shared_ptr<arrow::Table> table, int column_id, sort_type t) {
 	std::vector<index123> *r;
 	auto column = table->column(column_id);
 	if (column->type()->id() == arrow::Type::STRING) {
-		r = sort_parallel_single<std::string, arrow::StringArray>(column->data());
+		r = sort_parallel_single<std::string, arrow::StringArray>(column->data(), t);
 	} else if (column->type()->id() == arrow::Type::INT64) {
-		r = sort_parallel_single<arrow::Int64Type::c_type, arrow::Int64Array>(column->data());
+		r = sort_parallel_single<arrow::Int64Type::c_type, arrow::Int64Array>(column->data(), t);
 	} else {
-		r = sort_parallel_single<arrow::DoubleType::c_type, arrow::DoubleArray>(column->data());
+		r = sort_parallel_single<arrow::DoubleType::c_type, arrow::DoubleArray>(column->data(), t);
 	}
 	return sort_finalize(table, r);
 }
 
 // Main function
-std::shared_ptr<arrow::Table> sort(std::shared_ptr<arrow::Table> table, std::vector<int> column_ids) {
+std::shared_ptr<arrow::Table> sort(std::shared_ptr<arrow::Table> table, std::vector<int> column_ids, std::vector<sort_type> t) {
 	printf("TASK: sorting by %s.\n", column_ids.size() == 1 ? "single column" : "multiple columns");
 	auto begin = std::chrono::steady_clock::now();
-	std::shared_ptr<arrow::Table> t;
+	std::shared_ptr<arrow::Table> answer;
 	if (column_ids.size() == 1) {
-		t = sort_dispatch(table, column_ids[0]);
+		answer = sort_dispatch(table, column_ids[0], t[0]);
 	} else  {
-		t = sort_parallel_multiple(table, column_ids);
+		answer = sort_parallel_multiple(table, column_ids, t);
 	}
 	print_time(begin);
-	return t;
+	return answer;
 }
 #endif

@@ -70,14 +70,14 @@ std::shared_ptr<arrow::Table> taxi4(std::shared_ptr<arrow::Table> table) {
 	aggregate_task taxi4_task = {count, 0};
 	auto taxi4_table2 = aggregate(taxi4_table1, taxi4_group_by, {&taxi4_task});
 	// numbers of columns are completely different here
-	return sort(taxi4_table2, {0, 3}); // Only one chunk for sort here, not a good checking.
+	return sort(taxi4_table2, {0, 3}, {asc, desc}); // Only one chunk for sort here, not a good checking.
 }
 
-int main() {
+int main(int argc, char** argv) {
 	printf("\nThread number: %d\n\n", arrow::GetCpuThreadPoolCapacity());
 
-	auto table = load_csv("trips_xaa.csv", true);
-	//table = load_csv("trips_xaa.csv", false);
+	auto table = load_csv(argc > 1 ? argv[1] : "trips_xaa.csv", true);
+	//table = load_csv(argc > 1 ? argv[1] : "trips_xaa.csv", false);
 
 	//  2 - pickup_datetime
 	// 10 - passenger count
@@ -101,7 +101,6 @@ int main() {
 
    TODO stability:
 	handling nil values
-	assuming that chunks and arrays have the same lengths among all columns
 	change all C pointers to shared pointers
 	check where pointers can be changes to references
 	memory leaks?
@@ -111,16 +110,15 @@ int main() {
 	transformation multiple columns in one function
 	read csv with custom header
 	transform without templates - how to determine functions?
-	sort ascending and descending
+	aggregate - median
 
    TODO quality:
-	filename to parameters
 	single thread load_csv to parameters
 	build system
 	readme
 	error checking via returning status
 
    TODO assumptions:
-	all column has the same number (and corresponding length) of chunks
+	all columns have the same number (and corresponding length) of chunks
 	first parallelization step will be with record batch size equal to chunk
 */

@@ -22,7 +22,7 @@ std::shared_ptr<arrow::Table> load_csv(std::string path, bool threads) {
 	auto memp = arrow::MemoryPool::CreateDefault();
 
  	std::shared_ptr<arrow::io::ReadableFile> inp;
-	auto r = arrow::io::ReadableFile::Open(path,&inp);
+	auto r = arrow::io::ReadableFile::Open(path, &inp); // TODO check existence
 
 	std::shared_ptr<arrow::csv::TableReader> tp;
 	r = arrow::csv::TableReader::Make(memp.get(), inp, ropt, popt, copt, &tp);
