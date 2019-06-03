@@ -72,7 +72,7 @@ bool index123_compare(index123 a, index123 b) {
 			return index123::t[i] == desc ? true : false;
 		}
 	}
-	return desc ? false : true;
+	return false;//false : true;
 }
 
 std::vector<index123> *sort_sequential_multiple(int array_length, int chunk_number) {
@@ -98,7 +98,35 @@ std::shared_ptr<arrow::Table> sort_parallel_multiple(std::shared_ptr<arrow::Tabl
 		delete(result);
 		delete(addition);
 		result = new_result;
+		//printf("chunk number %d\n", i);
 	}
+	auto temp = sort_finalize(table, result);
+	delete(result);
+	return temp;
+}
+
+std::vector<index123> *tree (std::shared_ptr<arrow::Table> table, int a, int b) {
+	std::vector<index123> *result;
+	if (b - a == 1) {
+		result = sort_sequential_multiple(table->column(index123::column_ids[0])->data()->chunk(a)->length(), a);
+		//printf("chunk number %d\n", a);
+	} else {
+		auto left = tree(table, a, a + (b-a)/2);
+		auto right = tree(table, a + (b-a)/2, b);
+		result = new std::vector<index123>(left->size() + right->size());
+		std::merge(left->begin(), left->end(), right->begin(), right->end(), result->begin(), index123_compare);
+		delete(left);
+		delete(right);
+	}
+	return result;
+}
+
+std::shared_ptr<arrow::Table> sort_parallel_multiple_tree(std::shared_ptr<arrow::Table> table, std::vector<int> column_ids, std::vector<sort_type> t) {
+	printf("      Arrow is columnar database and this request is low performance\n");
+	index123::column_ids = column_ids;
+	index123::t = t;
+	index123::table = table;
+	std::vector<index123> *result = tree(table, 0, table->column(column_ids[0])->data()->num_chunks());
 	auto temp = sort_finalize(table, result);
 	delete(result);
 	return temp;
@@ -175,7 +203,7 @@ std::shared_ptr<arrow::Table> sort(std::shared_ptr<arrow::Table> table, std::vec
 	if (column_ids.size() == 1) {
 		answer = sort_dispatch(table, column_ids[0], t[0]);
 	} else  {
-		answer = sort_parallel_multiple(table, column_ids, t);
+		answer = sort_parallel_multiple_tree(table, column_ids, t);
 	}
 	print_time(begin);
 	return answer;
