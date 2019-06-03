@@ -70,7 +70,25 @@ std::shared_ptr<arrow::Table> taxi4(std::shared_ptr<arrow::Table> table) {
 	aggregate_task taxi4_task = {count, 0};
 	auto taxi4_table2 = aggregate(taxi4_table1, taxi4_group_by, {&taxi4_task});
 	// numbers of columns are completely different here
-	return sort(taxi4_table2, {0, 3}, {asc, desc}); // Only one chunk for sort here, not a good checking.
+	return sort(taxi4_table2, {0, 3}, {asc, desc}); // Only one chunk for sort here, not a good checking - see sortAll
+}
+
+std::shared_ptr<arrow::Table> sortAll(std::shared_ptr<arrow::Table> table) {
+        printf("NAME: sortAll\n");
+	// TODO we can build only double, int64 and string columns currently, so we can't sort all our table
+	std::vector<std::shared_ptr<arrow::Column>> clmns;
+        std::vector<std::shared_ptr<arrow::Field>> flds;
+                clmns.push_back(table->column(10));
+                flds.push_back(table->column(10)->field());
+                clmns.push_back(table->column(11));
+                flds.push_back(table->column(11)->field());
+                clmns.push_back(table->column(19));
+                flds.push_back(table->column(19)->field());
+                clmns.push_back(table->column(24));
+                flds.push_back(table->column(24)->field());
+        auto reduced_table = arrow::Table::Make(std::make_shared<arrow::Schema>(flds), clmns);
+
+        return sort(reduced_table, {0, 1}, {asc, desc});
 }
 
 int main(int argc, char** argv) {
@@ -89,6 +107,7 @@ int main(int argc, char** argv) {
 	print_table(taxi2(table));
 	print_table(taxi3(table));
 	print_table(taxi4(table));
+	//print_table(sortAll(table));
 
 	return 0;
 }
