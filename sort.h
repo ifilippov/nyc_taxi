@@ -92,6 +92,7 @@ std::shared_ptr<arrow::Table> sort_parallel_multiple(std::shared_ptr<arrow::Tabl
 	index123::table = table;
 	std::vector<index123> *result = new std::vector<index123>(0);
 	for (int i = 0; i < table->column(column_ids[0])->data()->num_chunks(); i++) { // other columns are the same
+		// TBB in parallel for all available chunks or sequential for each incoming chunk
 		std::vector<index123> *addition = sort_sequential_multiple(table->column(column_ids[0])->data()->chunk(i)->length(), i);
 		std::vector<index123> *new_result = new std::vector<index123>(result->size() + addition->size());
 		std::merge(result->begin(), result->end(), addition->begin(), addition->end(), new_result->begin(), index123_compare);
@@ -108,12 +109,14 @@ std::shared_ptr<arrow::Table> sort_parallel_multiple(std::shared_ptr<arrow::Tabl
 std::vector<index123> *tree (std::shared_ptr<arrow::Table> table, int a, int b) {
 	std::vector<index123> *result;
 	if (b - a == 1) {
+		// TBB in parallel for all available chunks or sequential for each incoming chunk
 		result = sort_sequential_multiple(table->column(index123::column_ids[0])->data()->chunk(a)->length(), a);
 		//printf("chunk number %d\n", a);
 	} else {
 		auto left = tree(table, a, a + (b-a)/2);
 		auto right = tree(table, a + (b-a)/2, b);
 		result = new std::vector<index123>(left->size() + right->size());
+		// TBB in parallel for all available chunks or sequential for each incoming chunk
 		std::merge(left->begin(), left->end(), right->begin(), right->end(), result->begin(), index123_compare);
 		delete(left);
 		delete(right);
@@ -166,6 +169,7 @@ std::vector<index123> *sort_parallel_single(std::shared_ptr<arrow::ChunkedArray>
 	std::vector<tuple<T>> *result = new std::vector<tuple<T>>(0);
 	for (int i = 0; i < column->num_chunks(); i++) {
 		auto array = std::static_pointer_cast<T2>(column->chunk(i));
+		// TBB in parallel for all available chunks or sequential for each incoming chunk
 		std::vector<tuple<T>> *addition = sort_sequential_single<T, T2>(array, i, t);
 		std::vector<tuple<T>> *new_result = new std::vector<tuple<T>>(result->size() + addition->size());
 		std::merge(result->begin(), result->end(), addition->begin(), addition->end(), new_result->begin(), t == desc ? tuple_compare_desc<T> : tuple_compare_asc<T>);

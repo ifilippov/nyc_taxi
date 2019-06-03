@@ -90,6 +90,7 @@ std::shared_ptr<arrow::Array> aggregate_PARALLEL(std::shared_ptr<arrow::ChunkedA
 	partial_aggregate_task<T> *p_task = new partial_aggregate_task<T>{task, 0};
 	for (int j = 0; j < column->num_chunks(); j++) {
 		auto c = std::static_pointer_cast<T2>(column->chunk(j));
+		// TBB in parallel for all available chunks or sequential for each incoming chunk
 		aggregate_sequential<T, T2>(c, gb, p_task);
 	}
 	auto t = aggregate_finalize<T, T4>(p_task);

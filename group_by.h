@@ -89,6 +89,7 @@ group* group_by_parallel_multiple(std::shared_ptr<arrow::Table> table, std::vect
 		for (int j = 0; j < column_ids.size(); j++) {
 			all_arrays[i].push_back(table->column(column_ids[j])->data()->chunk(i));
 		}
+		// TBB in parallel for all available chunks or sequential for each incoming chunk
 		group_by_sequential_multiple(&(all_arrays[i]), &pg, i);
 	}
 
@@ -153,6 +154,7 @@ group* group_by_parallel_single(std::shared_ptr<arrow::ChunkedArray> column, std
 	partial_single_group<T, T4> pg = {new(group), 0, &bld};
 	for (int i = 0; i < column->num_chunks(); i++) {
 		auto array = std::static_pointer_cast<T2>(column->chunk(i));
+		// TBB in parallel for all available chunks or sequential for each incoming chunk
 		group_by_sequential_single<T, T2, T4>(array, &pg);
 	}
 	pg.bld->Finish(&data);

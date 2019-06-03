@@ -23,6 +23,7 @@ std::shared_ptr<arrow::Table> transform(std::shared_ptr<arrow::Table> table, int
 		if (c == NULL) {
 			printf("Type of %d column is wrong!\n", column_id + 1);
 		}
+		// TBB in parallel for all available chunks or sequential for each incoming chunk
 		for (int j = 0; j < c->length(); j++) {
 			auto value = c->Value(j);
 			T_n new_value = transformation(value);
