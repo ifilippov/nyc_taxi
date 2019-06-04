@@ -13,9 +13,11 @@
 
 // For both single and multiple columns
 struct group {
+	int max_index;
 	std::vector<int> redirection;
 	std::vector<std::shared_ptr<arrow::Column>> columns;
 	std::vector<std::shared_ptr<arrow::Field>> fields;
+	group(): max_index(0) {}
 };
 
 // For multiple columns
@@ -58,7 +60,6 @@ namespace std {
 
 struct partial_mult_group {
 	group *g;
-	int temp;
 	std::unordered_map<position, int> map;
 	std::vector<std::pair<int, int>> fast_build;
 };
@@ -70,10 +71,10 @@ void group_by_sequential_multiple(std::vector<std::shared_ptr<arrow::Array>> *ar
 		if (number != pg->map.end()) {
 			pg->g->redirection.push_back(number->second);
 		} else {
-			pg->map.insert({p, pg->temp});
-			pg->g->redirection.push_back(pg->temp);
+			pg->map.insert({p, pg->g->max_index});
+			pg->g->redirection.push_back(pg->g->max_index);
 			pg->fast_build.push_back({n, i});
-			pg->temp++;
+			pg->g->max_index++;
 		}
 	}
 }
@@ -81,7 +82,7 @@ void group_by_sequential_multiple(std::vector<std::shared_ptr<arrow::Array>> *ar
 group* group_by_parallel_multiple(std::shared_ptr<arrow::Table> table, std::vector<int> column_ids) {
 	printf("      Arrow is columnar database and this request is low performance\n");
 	printf("      There are two variants: prebuild caches or not. Executing _without_ prebuilding\n");
-	partial_mult_group pg = {new(group), 0};
+	partial_mult_group pg = {new(group)};
 	// Can different columns have different chunk number? Or it is property of table?
 	int num_chunks = table->column(column_ids[0])->data()->num_chunks();
 	std::vector<std::vector<std::shared_ptr<arrow::Array>>> all_arrays(num_chunks);
@@ -89,6 +90,7 @@ group* group_by_parallel_multiple(std::shared_ptr<arrow::Table> table, std::vect
 		for (int j = 0; j < column_ids.size(); j++) {
 			all_arrays[i].push_back(table->column(column_ids[j])->data()->chunk(i));
 		}
+		// TBB in parallel for all available chunks or sequential for each incoming chunk
 		group_by_sequential_multiple(&(all_arrays[i]), &pg, i);
 	}
 
@@ -126,7 +128,6 @@ group* group_by_parallel_multiple(std::shared_ptr<arrow::Table> table, std::vect
 template <typename T, typename T4>
 struct partial_single_group {
 	group *g;
-	int temp;
 	T4 *bld;
 	std::unordered_map<T, int> map;
 };
@@ -139,10 +140,10 @@ void group_by_sequential_single(std::shared_ptr<T2> array, partial_single_group<
 		if (number != pg->map.end()) {
 			pg->g->redirection.push_back(number->second);
 		} else {
-			pg->map.insert({value, pg->temp});
-			pg->g->redirection.push_back(pg->temp);
+			pg->map.insert({value, pg->g->max_index});
+			pg->g->redirection.push_back(pg->g->max_index);
 			pg->bld->Append(value);
-			pg->temp++;
+			pg->g->max_index++;
 		}
 	}
 }
@@ -150,9 +151,10 @@ void group_by_sequential_single(std::shared_ptr<T2> array, partial_single_group<
 template <typename T, typename T2, typename T4>
 group* group_by_parallel_single(std::shared_ptr<arrow::ChunkedArray> column, std::shared_ptr<arrow::Array>& data) {
 	T4 bld;
-	partial_single_group<T, T4> pg = {new(group), 0, &bld};
+	partial_single_group<T, T4> pg = {new(group), &bld};
 	for (int i = 0; i < column->num_chunks(); i++) {
 		auto array = std::static_pointer_cast<T2>(column->chunk(i));
+		// TBB in parallel for all available chunks or sequential for each incoming chunk
 		group_by_sequential_single<T, T2, T4>(array, &pg);
 	}
 	pg.bld->Finish(&data);

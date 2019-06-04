@@ -29,10 +29,6 @@ struct partial_aggregate_task {
 
 template <typename T>
 void aggregate_internal(partial_aggregate_task<T>* p_task, int row_number, int value) {
-	if (p_task->partial.size() <= row_number) {
-		// TODO what if not increasing?
-		p_task->partial.push_back(0);
-	}
 	switch (p_task->task->type) {
 	case sum:
 		p_task->partial[row_number] += value;
@@ -52,9 +48,6 @@ void aggregate_internal(partial_aggregate_task<T>* p_task, int row_number, int v
 		break;
 	case average:
 		p_task->partial[row_number] += value;
-		if (p_task->partial1.size() <= row_number) {
-			p_task->partial1.push_back(0);
-		}
 		p_task->partial1[row_number]++;
 		break;
 	}
@@ -87,9 +80,10 @@ std::shared_ptr<arrow::Array> aggregate_finalize(partial_aggregate_task<T> *p_ta
 
 template <typename T, typename T2, typename T4>
 std::shared_ptr<arrow::Array> aggregate_PARALLEL(std::shared_ptr<arrow::ChunkedArray> column, group *gb, aggregate_task *task) {
-	partial_aggregate_task<T> *p_task = new partial_aggregate_task<T>{task, 0};
+	partial_aggregate_task<T> *p_task = new partial_aggregate_task<T>{task, 0, std::vector<T>(gb->max_index), std::vector<T>(gb->max_index)}; // second vector is redundant if not average
 	for (int j = 0; j < column->num_chunks(); j++) {
 		auto c = std::static_pointer_cast<T2>(column->chunk(j));
+		// TBB in parallel for all available chunks or sequential for each incoming chunk
 		aggregate_sequential<T, T2>(c, gb, p_task);
 	}
 	auto t = aggregate_finalize<T, T4>(p_task);
