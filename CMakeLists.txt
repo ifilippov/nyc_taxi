@@ -12,6 +12,7 @@ find_package(arrow REQUIRED arrow_shared)
 #    message(STATUS "${_variableName}=${${_variableName}}")
 #endforeach()
 
+target_compile_features(bench PRIVATE cxx_std_17)
 target_include_directories(bench PRIVATE .
                            ${CMAKE_INSTALL_PREFIX}/include)
 
