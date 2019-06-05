@@ -15,11 +15,12 @@ std::shared_ptr<arrow::Table> transform(std::shared_ptr<arrow::Table> table, int
 	printf("TASK: transforming of column\n");
 	auto begin = std::chrono::steady_clock::now();
 
-	arrow::ArrayVector new_chunks;
+	auto column = table->column(column_id)->data();
+	arrow::ArrayVector new_chunks(column->num_chunks());
 	std::shared_ptr<arrow::Array> data;
-	for (int i = 0; i < table->column(column_id)->data()->num_chunks(); i++) {
+	for (int i = 0; i < column->num_chunks(); i++) {
 		T4 bld; // template
-		auto c = std::dynamic_pointer_cast<T2>(table->column(column_id)->data()->chunk(i)); // template
+		auto c = std::dynamic_pointer_cast<T2>(column->chunk(i)); // template
 		if (c == NULL) {
 			printf("Type of %d column is wrong!\n", column_id + 1);
 		}
@@ -30,7 +31,7 @@ std::shared_ptr<arrow::Table> transform(std::shared_ptr<arrow::Table> table, int
 			bld.Append(new_value); // resize?
 		}
 		bld.Finish(&data);
-		new_chunks.push_back(data);
+		new_chunks[i] = data;
 	}
 
 	std::shared_ptr<arrow::Field> new_field = std::make_shared<arrow::Field>("name", data->type());
