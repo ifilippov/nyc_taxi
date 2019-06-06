@@ -70,7 +70,7 @@ std::shared_ptr<arrow::Table> taxi4(std::shared_ptr<arrow::Table> table) {
 	aggregate_task taxi4_task = {count, 0};
 	auto taxi4_table2 = aggregate(taxi4_table1, taxi4_group_by, {&taxi4_task});
 	// numbers of columns are completely different here
-	return sort(taxi4_table2, {0, 3}, {asc, desc}); // Only one chunk for sort here, not a good checking - see sortAll
+	return sort(taxi4_table2, {0, 3}, {asc, desc}, flat); // Only one chunk for sort here, not a good checking - see sortAll
 }
 
 std::shared_ptr<arrow::Table> sortAll(std::shared_ptr<arrow::Table> table) {
@@ -88,7 +88,7 @@ std::shared_ptr<arrow::Table> sortAll(std::shared_ptr<arrow::Table> table) {
                 flds.push_back(table->column(24)->field());
         auto reduced_table = arrow::Table::Make(std::make_shared<arrow::Schema>(flds), clmns);
 
-        return sort(reduced_table, {0, 1}, {asc, desc});
+        return sort(reduced_table, {0, 3}, {asc, desc}, tree);
 }
 
 int main(int argc, char** argv) {
