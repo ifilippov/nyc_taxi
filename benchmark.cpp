@@ -73,22 +73,30 @@ std::shared_ptr<arrow::Table> taxi4(std::shared_ptr<arrow::Table> table) {
 	return sort(taxi4_table2, {0, 3}, {asc, desc}, flat); // Only one chunk for sort here, not a good checking - see sortAll
 }
 
-std::shared_ptr<arrow::Table> sortAll(std::shared_ptr<arrow::Table> table) {
-        printf("NAME: sortAll\n");
+void perf(std::shared_ptr<arrow::Table> table) {
+	printf("NAME: perf: aggregate, sort single and sort multiple for whole table\n");
 	// TODO we can build only double, int64 and string columns currently, so we can't sort all our table
-	std::vector<std::shared_ptr<arrow::Column>> clmns;
-        std::vector<std::shared_ptr<arrow::Field>> flds;
-                clmns.push_back(table->column(10));
-                flds.push_back(table->column(10)->field());
-                clmns.push_back(table->column(11));
-                flds.push_back(table->column(11)->field());
-                clmns.push_back(table->column(19));
-                flds.push_back(table->column(19)->field());
-                clmns.push_back(table->column(24));
-                flds.push_back(table->column(24)->field());
-        auto reduced_table = arrow::Table::Make(std::make_shared<arrow::Schema>(flds), clmns);
 
-        return sort(reduced_table, {0, 3}, {asc, desc}, tree);
+	aggregate_task max_passengers = {max, 10};
+	print_table(aggregate(table, NULL, {&max_passengers}));
+
+	std::vector<std::shared_ptr<arrow::Column>> clmns;
+	std::vector<std::shared_ptr<arrow::Field>> flds;
+		clmns.push_back(table->column(24));
+		flds.push_back(table->column(24)->field());
+		clmns.push_back(table->column(10));
+		flds.push_back(table->column(10)->field());
+		clmns.push_back(table->column(11));
+		flds.push_back(table->column(11)->field());
+		clmns.push_back(table->column(19));
+		flds.push_back(table->column(19)->field());
+	auto reduced_table = arrow::Table::Make(std::make_shared<arrow::Schema>(flds), clmns);
+
+	auto single = sort(reduced_table, {3}, {desc}, tree);
+	auto multiple = sort(reduced_table, {1, 0}, {asc, desc}, tree);
+
+	print_table(single);
+	print_table(multiple);
 }
 
 int main(int argc, char** argv) {
@@ -107,7 +115,7 @@ int main(int argc, char** argv) {
 	print_table(taxi2(table));
 	print_table(taxi3(table));
 	print_table(taxi4(table));
-	//print_table(sortAll(table));
+	//perf(table);
 
 	return 0;
 }
