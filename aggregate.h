@@ -101,7 +101,7 @@ std::shared_ptr<arrow::Array> aggregate_finalize(partial_aggregate_task<T> *p_ta
 
 template <typename T, typename T2, typename T4>
 std::shared_ptr<arrow::Array> aggregate_PARALLEL(std::shared_ptr<arrow::ChunkedArray> column, group *gb, aggregate_task *task) {
-  partial_aggregate_task<T> ptask{task, 0, std::vector<T>(gb->max_index), std::vector<T>(gb->max_index)}; // second vector is redundant if not average
+  partial_aggregate_task<T> ptask{task, 0, std::vector<T>(gb != NULL ? gb->max_index : 1), std::vector<T>(gb != NULL ? gb->max_index : 1)}; // TODO second vector is redundant if not average
 
   for (int j = 0; j < column->num_chunks(); j++) {
     auto c = std::static_pointer_cast<T2>(column->chunk(j));
