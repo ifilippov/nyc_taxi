@@ -12,14 +12,20 @@
 #include <tbb/tbb.h>
 #endif
 
-template<typename E, template<E> typename F, E T, E... Args>
+
+// This helper is equivalent to runtime dispatch like switch((E) t) {case Args[0]:...; case Args[1]:...;...}
+// except it predefines all the case branches so it is easier to support multiple instances of runtime dispatch
+// over the same type & values. Example:
+//   using aggregate_dispatcher = runtime_dispatcher<aggregate_task_type, count, sum, min, max, average>;
+//   aggregate_dispatcher::call<template body>(task->type, c, gb, &ptask);
+template<typename E, E T, E... Args>
 struct runtime_dispatcher {
-    template<typename... A>
+    template<template<E> typename F, typename... A>
     static auto call(E t, A... args) -> decltype(F<T>()(args...)) {
         if(t==T)
           return F<T>()(args...);
         else if constexpr(sizeof...(Args))
-          return runtime_dispatcher<E, F, Args...>::call(t, args...);
+          return runtime_dispatcher<E, Args...>::template call<F>(t, args...);
         assert(false);
     }
 };
@@ -29,6 +35,7 @@ struct runtime_dispatcher {
 //++++++++++++++++++++++++++++++
 
 enum aggregate_task_type { count, sum, min, max, average /*TODO median*/ };
+using aggregate_dispatcher = runtime_dispatcher<aggregate_task_type, count, sum, min, max, average>;
 
 struct aggregate_task {
   aggregate_task_type type;
@@ -99,7 +106,7 @@ std::shared_ptr<arrow::Array> aggregate_PARALLEL(std::shared_ptr<arrow::ChunkedA
   for (int j = 0; j < column->num_chunks(); j++) {
     auto c = std::static_pointer_cast<T2>(column->chunk(j));
     // TBB in parallel for all available chunks or sequential for each incoming chunk
-    runtime_dispatcher<aggregate_task_type, aggregate_sequential<T, T2>::template body, count, sum, min, max, average>::call(task->type, c, gb, &ptask);
+    aggregate_dispatcher::call<aggregate_sequential<T, T2>::template body>(task->type, c, gb, &ptask);
   }
   auto t = aggregate_finalize<T, T4>(&ptask);
   return t;
