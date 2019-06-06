@@ -14,7 +14,7 @@
 // For both single and multiple columns
 struct group {
 	int max_index;
-	std::vector<int> redirection;
+	std::vector<std::vector<int>> redirection;
 	std::vector<std::shared_ptr<arrow::Column>> columns;
 	std::vector<std::shared_ptr<arrow::Field>> fields;
 	group(): max_index(0) {}
@@ -65,14 +65,16 @@ struct partial_mult_group {
 };
 
 void group_by_sequential_multiple(std::vector<std::shared_ptr<arrow::Array>> *arrays, partial_mult_group* pg, int n) {
+	int s = pg->g->redirection.size();
+	pg->g->redirection.push_back(std::vector<int>(0));
 	for (int i = 0; i < (*arrays)[0]->length(); i++) {
 		position p{i, arrays}; // TODO copy constructor? move constructor?
 		auto number = pg->map.find(p);
 		if (number != pg->map.end()) {
-			pg->g->redirection.push_back(number->second);
+			pg->g->redirection[s].push_back(number->second);
 		} else {
 			pg->map.insert({p, pg->g->max_index});
-			pg->g->redirection.push_back(pg->g->max_index);
+			pg->g->redirection[s].push_back(pg->g->max_index);
 			pg->fast_build.push_back({n, i});
 			pg->g->max_index++;
 		}
@@ -134,14 +136,16 @@ struct partial_single_group {
 
 template <typename T, typename T2, typename T4>
 void group_by_sequential_single(std::shared_ptr<T2> array, partial_single_group<T, T4>* pg) {
+	int s = pg->g->redirection.size();
+	pg->g->redirection.push_back(std::vector<int>(0));
 	for (int i = 0; i < array->length(); i++) {
 		T value = get_value<T, T2>(array, i);
 		auto number = pg->map.find(value);
 		if (number != pg->map.end()) {
-			pg->g->redirection.push_back(number->second);
+			pg->g->redirection[s].push_back(number->second);
 		} else {
 			pg->map.insert({value, pg->g->max_index});
-			pg->g->redirection.push_back(pg->g->max_index);
+			pg->g->redirection[s].push_back(pg->g->max_index);
 			pg->bld->Append(value);
 			pg->g->max_index++;
 		}

@@ -45,71 +45,100 @@ struct aggregate_task {
 template <typename T>
 struct partial_aggregate_task {
   aggregate_task *task;
-  int iterate;
   // mutable buffers?
   std::vector<T> partial;
   std::vector<T> partial1;
 };
 
 template<aggregate_task_type a, typename T>
-void aggregate_internal(partial_aggregate_task<T>* p_task, int row_number, int value) {
-    if constexpr(a == sum)
+void aggregate_internal(partial_aggregate_task<T>* p_task, int row_number, int value, int c) {
+    if constexpr(a == sum) {
         p_task->partial[row_number] += value;
-    if constexpr(a == count)
-        p_task->partial[row_number]++;
-    if constexpr(a == min)
+    }
+    if constexpr(a == count) {
+        p_task->partial1[row_number] += c;
+    }
+    if constexpr(a == min) {
         if (value < p_task->partial[row_number]) {
-          p_task->partial[row_number] = value;
+            p_task->partial[row_number] = value;
         }
-    if constexpr(a == max)
+    }
+    if constexpr(a == max) {
         if (value > p_task->partial[row_number]) {
-          p_task->partial[row_number] = value;
+            p_task->partial[row_number] = value;
         }
+    }
     if constexpr(a == average) {
         p_task->partial[row_number] += value;
-        p_task->partial1[row_number]++;
+        p_task->partial1[row_number] += c;
     }
 }
 
 template <typename T, typename T2>
 struct aggregate_sequential {
-  template<aggregate_task_type a>
-  struct body {
-    void operator()(std::shared_ptr<T2> c, group *gb, partial_aggregate_task<T>* p_task) {
-      auto cv = c->raw_values();
-      if (gb) {
-        for (int j = 0; j < c->length(); j++)
-          aggregate_internal<a>(p_task, gb->redirection[p_task->iterate + j], cv[j]);
-      } else {
-        for (int j = 0; j < c->length(); j++)
-          aggregate_internal<a>(p_task, 0, cv[j]);
-      }
-      p_task->iterate += c->length();
-    }
-  };
+    template<aggregate_task_type a>
+    struct body {
+        void operator()(std::shared_ptr<T2> c, group *gb, partial_aggregate_task<T>* p_task, int chunk_number) {
+            auto cv = c->raw_values();
+            if (gb) {
+                for (int j = 0; j < c->length(); j++) {
+                    aggregate_internal<a>(p_task, gb->redirection[chunk_number][j], cv[j], 1);
+                }
+            } else {
+                for (int j = 0; j < c->length(); j++) {
+                    aggregate_internal<a>(p_task, 0, cv[j], 1);
+                }
+            }
+        }
+    };
 };
 
 template <typename T, typename T4>
-std::shared_ptr<arrow::Array> aggregate_finalize(partial_aggregate_task<T> *p_task) {
-  if (p_task->task->type == average) {
-    for (int j = 0; j < p_task->partial.size(); j++) {
-      p_task->partial[j] = p_task->partial[j] / p_task->partial1[j];
-    }
-  }
-  return vector_to_array<T, T4>(p_task->partial);
-}
+struct aggregate_finalize {
+    template<aggregate_task_type a>
+    struct body {
+        std::shared_ptr<arrow::Array> operator()(std::vector<partial_aggregate_task<T> *> p_tasks) {
+            for (int row_number = 0; row_number < p_tasks[0]->partial.size(); row_number++) {
+                for (int i = 1; i < p_tasks.size(); i++) {
+                    aggregate_internal<a>(p_tasks[0], row_number, p_tasks[i]->partial[row_number], p_tasks[i]->partial1[row_number]);
+                }
+            }
+            if constexpr(a == count) {
+                return vector_to_array<T, T4>(p_tasks[0]->partial1);
+            }
+            if constexpr(a == average) {
+                for (int j = 0; j < p_tasks[0]->partial.size(); j++) {
+                    p_tasks[0]->partial[j] = p_tasks[0]->partial[j] / p_tasks[0]->partial1[j];
+                }
+            }
+            return vector_to_array<T, T4>(p_tasks[0]->partial);
+        }
+    };
+};
 
 template <typename T, typename T2, typename T4>
 std::shared_ptr<arrow::Array> aggregate_PARALLEL(std::shared_ptr<arrow::ChunkedArray> column, group *gb, aggregate_task *task) {
-  partial_aggregate_task<T> ptask{task, 0, std::vector<T>(gb != NULL ? gb->max_index : 1), std::vector<T>(gb != NULL ? gb->max_index : 1)}; // TODO second vector is redundant if not average
-
-  for (int j = 0; j < column->num_chunks(); j++) {
-    auto c = std::static_pointer_cast<T2>(column->chunk(j));
-    // TBB in parallel for all available chunks or sequential for each incoming chunk
-    aggregate_dispatcher::call<aggregate_sequential<T, T2>::template body>(task->type, c, gb, &ptask);
-  }
-  auto t = aggregate_finalize<T, T4>(&ptask);
-  return t;
+    int N = 10;
+    std::vector<partial_aggregate_task<T> *> p_tasks(N);
+    int s = gb != NULL ? gb->max_index : 1;
+    for (int i = 0; i < N; i++) {
+        p_tasks[i] = new partial_aggregate_task<T>{task, std::vector<T>(s), std::vector<T>(s)};
+        for (int k = 0; k < s; k++) {
+            // TODO need some boolean point like "was used" for min and max. Not to use defult 0 for them.
+            p_tasks[i]->partial[k] = 0;
+            p_tasks[i]->partial1[k] = 0;
+        }
+    }
+    for (int j = 0; j < column->num_chunks(); j++) {
+        auto c = std::static_pointer_cast<T2>(column->chunk(j));
+        // TBB in parallel for all available chunks or sequential for each incoming chunk
+        aggregate_dispatcher::call<aggregate_sequential<T, T2>::template body>(task->type, c, gb, p_tasks[j%N], j);
+    }
+    auto t = aggregate_dispatcher::call<aggregate_finalize<T, T4>::template body>(task->type, p_tasks);
+    for (int i = 0; i < N; i++) {
+        delete(p_tasks[i]);
+    }
+    return t;
 }
 
 std::shared_ptr<arrow::Table> aggregate(std::shared_ptr<arrow::Table> table, group *gb, std::vector<aggregate_task*> tasks) {
