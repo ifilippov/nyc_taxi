@@ -1,6 +1,7 @@
 import pandas
 import decimal
 import sys
+import datetime
 
 #python pandas_variant.py
 
@@ -49,17 +50,30 @@ def taxi4(df):
 	df['trips'] = ""
 	return df.groupby(['passenger_count','pickup_datetime','trip_distance']).count().reset_index().sort_values(by=['pickup_datetime','trips'],ascending=[True, False])
 
+def measurement(a, table):
+	b = datetime.datetime.now()
+	print "DONE!", (b - a).seconds, "seconds /", (b - a).seconds * 1000 + (b - a).microseconds / 1000, "milliseconds"
+	if table is not None:
+		print "\n***RESULT***"
+		print table.to_string(index = False, header = False)
+	return datetime.datetime.now()
+
 filename = 'trips_xaa.csv'
 if len(sys.argv) > 1:
 	filename = sys.argv[1]
 
+print("\nThread number: unknown");
+
+print("\nTASK: loading CSV file");
+a = datetime.datetime.now()
 df = pandas.read_csv(filename, compression=None, header=None, names=['trip_id','vendor_id','pickup_datetime','dropoff_datetime','store_and_fwd_flag',
     'rate_code_id','pickup_longitude','pickup_latitude','dropoff_longitude','dropoff_latitude','passenger_count','trip_distance','fare_amount','extra',
     'mta_tax','tip_amount','tolls_amount','ehail_fee','improvement_surcharge','total_amount','payment_type','trip_type','pickup','dropoff','cab_type',
     'precipitation','snow_depth','snowfall','max_temperature','min_temperature','average_wind_speed','pickup_nyct2010_gid','pickup_ctlabel','pickup_borocode',
     'pickup_boroname','pickup_ct2010','pickup_boroct2010','pickup_cdeligibil','pickup_ntacode','pickup_ntaname','pickup_puma','dropoff_nyct2010_gid',
     'dropoff_ctlabel','dropoff_borocode','dropoff_boroname','dropoff_ct2010','dropoff_boroct2010','dropoff_cdeligibil','dropoff_ntacode','dropoff_ntaname','dropoff_puma'],)
-print(taxi1(df));
-print(taxi2(df));
-print(taxi3(df));
-print(taxi4(df));
+a = measurement(a, None)
+a = measurement(a, taxi1(df))
+a = measurement(a, taxi2(df))
+a = measurement(a, taxi3(df))
+measurement(a, taxi4(df))
