@@ -7,6 +7,7 @@
 #include <print.h>
 #include <transform.h>
 #include <sort.h>
+#include <time.h>
 
 #include <cmath>
 
@@ -16,7 +17,8 @@
 //++++++++++++++++++++++++++++++
 // BENCHMARK
 //++++++++++++++++++++++++++++++
-std::shared_ptr<arrow::Table> taxi1(std::shared_ptr<arrow::Table> table) {
+std::shared_ptr<arrow::Table>
+taxi1(std::shared_ptr<arrow::Table> table) {
 	//SELECT cab_type, count(cab_type)
 	//FROM trips
 	//GROUP BY cab_type;
@@ -26,7 +28,8 @@ std::shared_ptr<arrow::Table> taxi1(std::shared_ptr<arrow::Table> table) {
 	return aggregate(table, taxi1_group_by, {&taxi1_task});
 }
 
-std::shared_ptr<arrow::Table> taxi2(std::shared_ptr<arrow::Table> table) {
+std::shared_ptr<arrow::Table>
+taxi2(std::shared_ptr<arrow::Table> table) {
 	//SELECT passenger_count, avg(total_amount)
 	//FROM trips
 	//GROUP BY passenger_count;
@@ -36,7 +39,8 @@ std::shared_ptr<arrow::Table> taxi2(std::shared_ptr<arrow::Table> table) {
 	return aggregate(table, taxi2_group_by, {&taxi2_task});
 }
 
-std::shared_ptr<arrow::Table> taxi3(std::shared_ptr<arrow::Table> table) {
+std::shared_ptr<arrow::Table>
+taxi3(std::shared_ptr<arrow::Table> table) {
 	//SELECT passenger_count,
 	//	EXTRACT(year from pickup_datetime) as year,
 	//	count(*)
@@ -44,14 +48,17 @@ std::shared_ptr<arrow::Table> taxi3(std::shared_ptr<arrow::Table> table) {
 	//GROUP BY passenger_count,
 	//	year;
 	printf("NAME: Taxi number 3\n");
-	auto year = [](int64_t time) { time_t tt = static_cast<time_t>(time); return int64_t(gmtime(&tt)->tm_year + 1900); }; // gmtime (not localtime) because of python
+	auto year = [](int64_t time) {
+	  time_t tt = static_cast<time_t>(time); struct tm r;
+	  return int64_t(gmtime_r(&tt, &r)->tm_year + 1900); }; // gmtime (not localtime) because of python
 	auto taxi3_table = transform<int64_t, int64_t, arrow::TimestampArray, arrow::Int64Builder>(table, 2, year);
 	group *taxi3_group_by = group_by(taxi3_table, {2, 10});
 	aggregate_task taxi3_task = {count, 0};
 	return aggregate(taxi3_table, taxi3_group_by, {&taxi3_task});
 }
 
-std::shared_ptr<arrow::Table> taxi4(std::shared_ptr<arrow::Table> table) {
+std::shared_ptr<arrow::Table>
+taxi4(std::shared_ptr<arrow::Table> table) {
 	//SELECT passenger_count,
 	//	EXTRACT(year from pickup_datetime) as year,
 	//	round(trip_distance) distance,
@@ -63,7 +70,9 @@ std::shared_ptr<arrow::Table> taxi4(std::shared_ptr<arrow::Table> table) {
 	//ORDER BY year,
 	//	trips desc;
 	printf("NAME: Taxi number 4\n");
-	auto year = [](int64_t time) { time_t tt = static_cast<time_t>(time); return int64_t(gmtime(&tt)->tm_year + 1900); }; // gmtime (not localtime) because of python
+  auto year = [](int64_t time) {
+    time_t tt = static_cast<time_t>(time); struct tm r;
+    return int64_t(gmtime_r(&tt, &r)->tm_year + 1900); }; // gmtime (not localtime) because of python
 	auto taxi4_table = transform<int64_t, int64_t, arrow::TimestampArray, arrow::Int64Builder>(table, 2, year);
 	auto taxi4_table1 = transform<double, double, arrow::DoubleArray, arrow::DoubleBuilder>(taxi4_table, 11, round);
 	group *taxi4_group_by = group_by(taxi4_table1, {2, 10, 11});
