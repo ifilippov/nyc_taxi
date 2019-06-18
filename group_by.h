@@ -61,22 +61,17 @@ namespace std {
 struct partial_mult_group {
 	group *g;
 	std::unordered_map<position, int> map;
-	std::vector<std::pair<int, int>> fast_build;
 };
 
 void group_by_sequential_multiple(std::vector<std::shared_ptr<arrow::Array>> *arrays, partial_mult_group* pg, int n) {
-	int s = pg->g->redirection.size();
-	pg->g->redirection.push_back(std::vector<int>(0));
 	for (int i = 0; i < (*arrays)[0]->length(); i++) {
 		position p{i, arrays}; // TODO copy constructor? move constructor?
 		auto number = pg->map.find(p);
 		if (number != pg->map.end()) {
-			pg->g->redirection[s].push_back(number->second);
+			pg->g->redirection[n][i] = number->second;
 		} else {
-			pg->map.insert({p, pg->g->max_index});
-			pg->g->redirection[s].push_back(pg->g->max_index);
-			pg->fast_build.push_back({n, i});
-			pg->g->max_index++;
+			pg->g->redirection[n][i] = pg->map.size();
+			pg->map.insert({p, pg->map.size()});
 		}
 	}
 }
@@ -87,6 +82,12 @@ group* group_by_parallel_multiple(std::shared_ptr<arrow::Table> table, std::vect
 	partial_mult_group pg = {new(group)};
 	// Can different columns have different chunk number? Or it is property of table?
 	int num_chunks = table->column(column_ids[0])->data()->num_chunks();
+
+	pg.g->redirection = std::vector<std::vector<int>>(num_chunks);
+	for (int i = 0; i < num_chunks; i++) {
+		pg.g->redirection[i] = std::vector<int>(table->column(column_ids[0])->data()->chunk(i)->length());
+	}
+
 	std::vector<std::vector<std::shared_ptr<arrow::Array>>> all_arrays(num_chunks);
 	for (int i = 0; i < num_chunks; i++) {
 		for (int j = 0; j < column_ids.size(); j++) {
@@ -95,30 +96,30 @@ group* group_by_parallel_multiple(std::shared_ptr<arrow::Table> table, std::vect
 		// TBB in parallel for all available chunks or sequential for each incoming chunk
 		group_by_sequential_multiple(&(all_arrays[i]), &pg, i);
 	}
+	pg.g->max_index = pg.map.size();
 
 	for (int i = 0; i < column_ids.size(); i++) {
 		std::shared_ptr<arrow::ChunkedArray> ca = table->column(column_ids[i])->data();
 		std::shared_ptr<arrow::Array> data;
 		if (ca->type()->id() == arrow::Type::STRING) {
-			arrow::StringBuilder bld;
-			for (int j = 0; j < pg.fast_build.size(); j++) {
-				bld.Append((std::static_pointer_cast<arrow::StringArray>(ca->chunk(pg.fast_build[j].first)))->GetString(pg.fast_build[j].second));
+			std::vector<std::string> new_column(pg.map.size());
+			for (auto j = pg.map.begin(); j != pg.map.end(); j++) {
+				new_column[j->second] = (std::static_pointer_cast<arrow::StringArray>((*j->first.arrays)[i]))->GetString(j->first.row_index);
 			}
-			bld.Finish(&data);
+			data = vector_to_array<std::string, arrow::StringBuilder>(new_column);
 		} else if (ca->type()->id() == arrow::Type::INT64) {
-			arrow::Int64Builder bld;
-			for (int j = 0; j < pg.fast_build.size(); j++) {
-				bld.Append((std::static_pointer_cast<arrow::Int64Array>(ca->chunk(pg.fast_build[j].first)))->Value(pg.fast_build[j].second));
+			std::vector<int64_t> new_column(pg.map.size());
+			for (auto j = pg.map.begin(); j != pg.map.end(); j++) {
+				new_column[j->second] = (std::static_pointer_cast<arrow::Int64Array>((*j->first.arrays)[i]))->Value(j->first.row_index);
 			}
-			bld.Finish(&data);
+			data = vector_to_array<arrow::Int64Type::c_type, arrow::Int64Builder>(new_column);
 		} else {
-			arrow::DoubleBuilder bld;
-			for (int j = 0; j < pg.fast_build.size(); j++) {
-				bld.Append((std::static_pointer_cast<arrow::DoubleArray>(ca->chunk(pg.fast_build[j].first)))->Value(pg.fast_build[j].second));
+			std::vector<double> new_column(pg.map.size());
+			for (auto j = pg.map.begin(); j != pg.map.end(); j++) {
+				new_column[j->second] = (std::static_pointer_cast<arrow::DoubleArray>((*j->first.arrays)[i]))->Value(j->first.row_index);
 			}
-			bld.Finish(&data);
+			data = vector_to_array<arrow::DoubleType::c_type, arrow::DoubleBuilder>(new_column);
 		}
-
 		std::shared_ptr<arrow::Field> field = table->schema()->field(column_ids[i]);
 		pg.g->columns.push_back(std::make_shared<arrow::Column>(field->name(), data));
 		pg.g->fields.push_back(field);

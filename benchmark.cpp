@@ -10,8 +10,9 @@
 
 #include <cmath>
 
-// gcc benchmark.cpp -O3 -I. -I../arrow/cpp/src/ -I../arrow/cpp/release/src/ -L../arrow/cpp/release/release/ -Wl,-rpath=../arrow/cpp/release/release/ -larrow -lstdc++ -lm -std=c++17
-// gcc benchmark.cpp -O3 -I. -Wl,-rpath=../arrow/cpp/release/release/ -larrow -lstdc++ -lm -std=c++17
+// sudo apt-get install libtbb-dev
+// gcc benchmark.cpp -O3 -I. -I../arrow/cpp/src/ -I../arrow/cpp/release/src/ -L../arrow/cpp/release/release/ -Wl,-rpath=../arrow/cpp/release/release/ -larrow -lstdc++ -lm -ltbb -std=c++17
+// gcc benchmark.cpp -O3 -I. -Wl,-rpath=../arrow/cpp/release/release/ -larrow -lstdc++ -lm -ltbb -std=c++17
 
 //++++++++++++++++++++++++++++++
 // BENCHMARK
