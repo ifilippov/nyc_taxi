@@ -2,7 +2,6 @@
 #define GROUP_BY_H
 
 #define TBB_USE_PERFORMANCE_WARNINGS 1
-#define __TBB_EXTRA_DEBUG 1
 #define __TBB_STATISTICS 1
 
 #include <arrow/api.h>
@@ -114,7 +113,7 @@ group* group_by_parallel_multiple(std::shared_ptr<arrow::Table> table, std::vect
 
     auto *g = new group{num_chunks};
     std::vector<std::vector<std::shared_ptr<arrow::Array>>> all_arrays(num_chunks);
-    mult_group_map_t pg(200);
+    mult_group_map_t pg(2048);
 
     //tbb::parallel_for(0, num_chunks, [](int i) {
     for(int i = 0; i < num_chunks; i++) {
