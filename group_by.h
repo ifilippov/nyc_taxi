@@ -131,7 +131,6 @@ group* group_by_parallel_multiple(std::shared_ptr<arrow::Table> table, std::vect
 template <typename T, typename T4>
 struct partial_single_group {
 	group *g;
-	T4 *bld;
 	std::unordered_map<T, int> map;
 };
 
@@ -145,42 +144,44 @@ void group_by_sequential_single(std::shared_ptr<T2> array, partial_single_group<
 		if (number != pg->map.end()) {
 			pg->g->redirection[s].push_back(number->second);
 		} else {
-			pg->map.insert({value, pg->g->max_index});
-			pg->g->redirection[s].push_back(pg->g->max_index);
-			pg->bld->Append(value);
-			pg->g->max_index++;
+			pg->g->redirection[s].push_back(pg->map.size());
+			pg->map.insert({value, pg->map.size()});
 		}
 	}
 }
 
 template <typename T, typename T2, typename T4>
-group* group_by_parallel_single(std::shared_ptr<arrow::ChunkedArray> column, std::shared_ptr<arrow::Array>& data) {
-	T4 bld;
-	partial_single_group<T, T4> pg = {new(group), &bld};
-	for (int i = 0; i < column->num_chunks(); i++) {
-		auto array = std::static_pointer_cast<T2>(column->chunk(i));
+group* group_by_parallel_single(std::shared_ptr<arrow::Column> column) {
+	partial_single_group<T, T4> pg = {new(group)};
+	for (int i = 0; i < column->data()->num_chunks(); i++) {
+		auto array = std::static_pointer_cast<T2>(column->data()->chunk(i));
 		// TBB in parallel for all available chunks or sequential for each incoming chunk
 		group_by_sequential_single<T, T2, T4>(array, &pg);
 	}
-	pg.bld->Finish(&data);
+	pg.g->max_index = pg.map.size();
+
+	std::shared_ptr<arrow::Array> data;
+	std::vector<T> new_column(pg.map.size());
+	for (auto j = pg.map.begin(); j != pg.map.end(); j++) {
+		new_column[j->second] = j->first;
+	}
+	data = vector_to_array<T, T4>(new_column);
+        std::shared_ptr<arrow::Field> field = column->field();
+        pg.g->columns.push_back(std::make_shared<arrow::Column>(field->name(), data));
+        pg.g->fields.push_back(field);
+
 	return pg.g;
 }
 
 group* group_by_dispatch(std::shared_ptr<arrow::Table> table, int column_id) {
-	std::shared_ptr<arrow::Field> field = table->schema()->field(column_id);
-	std::shared_ptr<arrow::Array> data;
-	std::shared_ptr<arrow::ChunkedArray> column = table->column(column_id)->data();
-	group* g;
+	std::shared_ptr<arrow::Column> column = table->column(column_id);
 	if (column->type()->id() == arrow::Type::STRING) {
-		g = group_by_parallel_single<std::string, arrow::StringArray, arrow::StringBuilder>(column, data);
+		return group_by_parallel_single<std::string, arrow::StringArray, arrow::StringBuilder>(column);
 	} else if (column->type()->id() == arrow::Type::INT64) {
-		g = group_by_parallel_single<arrow::Int64Type::c_type, arrow::Int64Array, arrow::Int64Builder>(column, data);
+		return group_by_parallel_single<arrow::Int64Type::c_type, arrow::Int64Array, arrow::Int64Builder>(column);
 	} else {
-		g = group_by_parallel_single<arrow::DoubleType::c_type, arrow::DoubleArray, arrow::DoubleBuilder>(column, data);
+		return group_by_parallel_single<arrow::DoubleType::c_type, arrow::DoubleArray, arrow::DoubleBuilder>(column);
 	}
-	g->columns.push_back(std::make_shared<arrow::Column>(field->name(), data));
-	g->fields.push_back(field);
-	return g;
 }
 
 // Main function
