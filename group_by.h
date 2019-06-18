@@ -1,6 +1,10 @@
 #ifndef GROUP_BY_H
 #define GROUP_BY_H
 
+#define TBB_USE_PERFORMANCE_WARNINGS 1
+#define __TBB_EXTRA_DEBUG 1
+#define __TBB_STATISTICS 1
+
 #include <arrow/api.h>
 #include <unordered_map>
 
@@ -55,6 +59,25 @@ struct position {
     }
 };
 
+#if 1 //USE_TBB
+typedef tbb::concurrent_hash_map<position, int> mult_group_map_t;
+
+void group_by_sequential_multiple( std::vector<std::shared_ptr<arrow::Array>> *arrays
+                                 , std::vector<int> &redir, group *g, mult_group_map_t* pg, int n) {
+    for (int i = 0, end_i = (*arrays)[0]->length(); i < end_i; i++) {
+        position p{i, arrays}; // TODO copy constructor? move constructor?
+        mult_group_map_t::accessor a;
+        bool uniq = pg->insert(a, p);
+        if (!uniq) {
+            redir[i] = a->second;
+        } else {
+            a->second = redir[i] = g->increment_index();
+        }
+    }
+}
+
+#else
+
 namespace std {
 template <>
 // TODO user defined hash function
@@ -63,10 +86,7 @@ struct hash<position> {
         return size_t(p);
     }
 };
-};
-
-#if USE_TBB
-#else
+}
 typedef std::unordered_map<position, int> mult_group_map_t;
 
 void group_by_sequential_multiple( std::vector<std::shared_ptr<arrow::Array>> *arrays
@@ -92,9 +112,9 @@ group* group_by_parallel_multiple(std::shared_ptr<arrow::Table> table, std::vect
     auto *column0 = table->column(column_ids[0])->data().get();
     int num_chunks = column0->num_chunks();
 
-    mult_group_map_t pg;
     auto *g = new group{num_chunks};
     std::vector<std::vector<std::shared_ptr<arrow::Array>>> all_arrays(num_chunks);
+    mult_group_map_t pg(200);
 
     //tbb::parallel_for(0, num_chunks, [](int i) {
     for(int i = 0; i < num_chunks; i++) {
@@ -107,7 +127,6 @@ group* group_by_parallel_multiple(std::shared_ptr<arrow::Table> table, std::vect
         // TBB in parallel for all available chunks or sequential for each incoming chunk
         group_by_sequential_multiple(&chunk, redir, g, &pg, i);
     }//);
-    g->max_index = pg.size();
 
     for (int i = 0; i < column_ids.size(); i++) {
       std::shared_ptr<arrow::ChunkedArray> ca = table->column(column_ids[i])->data();
