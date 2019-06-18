@@ -6,6 +6,7 @@
 
 #include <print.h>
 #include <util.h>
+#include <tbb/tbb.h>
 
 //++++++++++++++++++++++++++++++
 // GROUP BY
@@ -17,7 +18,7 @@ struct group {
 	std::vector<std::vector<int>> redirection;
 	std::vector<std::shared_ptr<arrow::Column>> columns;
 	std::vector<std::shared_ptr<arrow::Field>> fields;
-	group(): max_index(0) {}
+	group(int n = 0): redirection(n), max_index(0) {}
 };
 
 // For multiple columns
@@ -58,73 +59,72 @@ namespace std {
 	};
 };
 
-struct partial_mult_group {
-	group *g;
-	std::unordered_map<position, int> map;
-};
+typedef std::unordered_map<position, int> mult_group_map_t;
 
-void group_by_sequential_multiple(std::vector<std::shared_ptr<arrow::Array>> *arrays, partial_mult_group* pg, int n) {
+void group_by_sequential_multiple(std::vector<std::shared_ptr<arrow::Array>> *arrays, group *g, mult_group_map_t* pg, int n) {
 	for (int i = 0; i < (*arrays)[0]->length(); i++) {
 		position p{i, arrays}; // TODO copy constructor? move constructor?
-		auto number = pg->map.find(p);
-		if (number != pg->map.end()) {
-			pg->g->redirection[n][i] = number->second;
+		auto number = pg->find(p);
+		if (number != pg->end()) {
+			g->redirection[n][i] = number->second;
 		} else {
-			pg->g->redirection[n][i] = pg->map.size();
-			pg->map.insert({p, pg->map.size()});
+		  // max_index
+			g->redirection[n][i] = pg->size();
+			pg->insert({p, pg->size()});
 		}
 	}
 }
 
 group* group_by_parallel_multiple(std::shared_ptr<arrow::Table> table, std::vector<int> column_ids) {
 	printf("      Arrow is columnar database and this request is low performance\n");
-	printf("      There are two variants: prebuild caches or not. Executing _without_ prebuilding\n");
-	partial_mult_group pg = {new(group)};
+	printf("      There are two variants: prebuild hashes or not. Executing _without_ prebuilding\n");
 	// Can different columns have different chunk number? Or it is property of table?
-	int num_chunks = table->column(column_ids[0])->data()->num_chunks();
+	auto *column0 = table->column(column_ids[0])->data().get();
+	int num_chunks = column0->num_chunks();
 
-	pg.g->redirection = std::vector<std::vector<int>>(num_chunks);
-	for (int i = 0; i < num_chunks; i++) {
-		pg.g->redirection[i] = std::vector<int>(table->column(column_ids[0])->data()->chunk(i)->length());
-	}
+    mult_group_map_t pg;
+    auto *g = new group{num_chunks};
+    std::vector<std::vector<std::shared_ptr<arrow::Array>>> all_arrays(num_chunks);
 
-	std::vector<std::vector<std::shared_ptr<arrow::Array>>> all_arrays(num_chunks);
-	for (int i = 0; i < num_chunks; i++) {
-		for (int j = 0; j < column_ids.size(); j++) {
-			all_arrays[i].push_back(table->column(column_ids[j])->data()->chunk(i));
-		}
-		// TBB in parallel for all available chunks or sequential for each incoming chunk
-		group_by_sequential_multiple(&(all_arrays[i]), &pg, i);
-	}
-	pg.g->max_index = pg.map.size();
+    //tbb::parallel_for(0, num_chunks, [](int i) {
+    for(int i = 0; i < num_chunks; i++) {
+        auto &chunk = all_arrays[i];
+        g->redirection[i] = std::vector<int>(column0->chunk(i)->length());
+        for (int j = 0; j < column_ids.size(); j++) {
+            chunk.push_back(table->column(column_ids[j])->data()->chunk(i));
+        }
+        // TBB in parallel for all available chunks or sequential for each incoming chunk
+        group_by_sequential_multiple(&chunk, g, &pg, i);
+    }//);
+    g->max_index = pg.size();
 
 	for (int i = 0; i < column_ids.size(); i++) {
 		std::shared_ptr<arrow::ChunkedArray> ca = table->column(column_ids[i])->data();
 		std::shared_ptr<arrow::Array> data;
 		if (ca->type()->id() == arrow::Type::STRING) {
-			std::vector<std::string> new_column(pg.map.size());
-			for (auto j = pg.map.begin(); j != pg.map.end(); j++) {
+			std::vector<std::string> new_column(pg.size());
+			for (auto j = pg.begin(); j != pg.end(); j++) {
 				new_column[j->second] = (std::static_pointer_cast<arrow::StringArray>((*j->first.arrays)[i]))->GetString(j->first.row_index);
 			}
 			data = vector_to_array<std::string, arrow::StringBuilder>(new_column);
 		} else if (ca->type()->id() == arrow::Type::INT64) {
-			std::vector<int64_t> new_column(pg.map.size());
-			for (auto j = pg.map.begin(); j != pg.map.end(); j++) {
+			std::vector<int64_t> new_column(pg.size());
+			for (auto j = pg.begin(); j != pg.end(); j++) {
 				new_column[j->second] = (std::static_pointer_cast<arrow::Int64Array>((*j->first.arrays)[i]))->Value(j->first.row_index);
 			}
 			data = vector_to_array<arrow::Int64Type::c_type, arrow::Int64Builder>(new_column);
 		} else {
-			std::vector<double> new_column(pg.map.size());
-			for (auto j = pg.map.begin(); j != pg.map.end(); j++) {
+			std::vector<double> new_column(pg.size());
+			for (auto j = pg.begin(); j != pg.end(); j++) {
 				new_column[j->second] = (std::static_pointer_cast<arrow::DoubleArray>((*j->first.arrays)[i]))->Value(j->first.row_index);
 			}
 			data = vector_to_array<arrow::DoubleType::c_type, arrow::DoubleBuilder>(new_column);
 		}
 		std::shared_ptr<arrow::Field> field = table->schema()->field(column_ids[i]);
-		pg.g->columns.push_back(std::make_shared<arrow::Column>(field->name(), data));
-		pg.g->fields.push_back(field);
+		g->columns.push_back(std::make_shared<arrow::Column>(field->name(), data));
+		g->fields.push_back(field);
 	}
-	return pg.g;
+	return g;
 }
 
 // For single column
@@ -156,7 +156,7 @@ void group_by_sequential_single(std::shared_ptr<T2> array, partial_single_group<
 template <typename T, typename T2, typename T4>
 group* group_by_parallel_single(std::shared_ptr<arrow::ChunkedArray> column, std::shared_ptr<arrow::Array>& data) {
 	T4 bld;
-	partial_single_group<T, T4> pg = {new(group), &bld};
+	partial_single_group<T, T4> pg = {new group(), &bld};
 	for (int i = 0; i < column->num_chunks(); i++) {
 		auto array = std::static_pointer_cast<T2>(column->chunk(i));
 		// TBB in parallel for all available chunks or sequential for each incoming chunk
@@ -167,34 +167,34 @@ group* group_by_parallel_single(std::shared_ptr<arrow::ChunkedArray> column, std
 }
 
 group* group_by_dispatch(std::shared_ptr<arrow::Table> table, int column_id) {
-	std::shared_ptr<arrow::Field> field = table->schema()->field(column_id);
-	std::shared_ptr<arrow::Array> data;
-	std::shared_ptr<arrow::ChunkedArray> column = table->column(column_id)->data();
-	group* g;
-	if (column->type()->id() == arrow::Type::STRING) {
-		g = group_by_parallel_single<std::string, arrow::StringArray, arrow::StringBuilder>(column, data);
-	} else if (column->type()->id() == arrow::Type::INT64) {
-		g = group_by_parallel_single<arrow::Int64Type::c_type, arrow::Int64Array, arrow::Int64Builder>(column, data);
-	} else {
-		g = group_by_parallel_single<arrow::DoubleType::c_type, arrow::DoubleArray, arrow::DoubleBuilder>(column, data);
-	}
-	g->columns.push_back(std::make_shared<arrow::Column>(field->name(), data));
-	g->fields.push_back(field);
-	return g;
+    std::shared_ptr<arrow::Field> field = table->schema()->field(column_id);
+    std::shared_ptr<arrow::Array> data;
+    std::shared_ptr<arrow::ChunkedArray> column = table->column(column_id)->data();
+    group* g;
+    if (column->type()->id() == arrow::Type::STRING) {
+        g = group_by_parallel_single<std::string, arrow::StringArray, arrow::StringBuilder>(column, data);
+    } else if (column->type()->id() == arrow::Type::INT64) {
+        g = group_by_parallel_single<arrow::Int64Type::c_type, arrow::Int64Array, arrow::Int64Builder>(column, data);
+    } else {
+        g = group_by_parallel_single<arrow::DoubleType::c_type, arrow::DoubleArray, arrow::DoubleBuilder>(column, data);
+    }
+    g->columns.push_back(std::make_shared<arrow::Column>(field->name(), data));
+    g->fields.push_back(field);
+    return g;
 }
 
 // Main function
 group* group_by(std::shared_ptr<arrow::Table> table, std::vector<int> column_ids) {
-	printf("TASK: grouping by %s. (building all group_by columns and NOT counting them)\n", column_ids.size() == 1 ? "single column" : "multiple columns");
-	auto begin = std::chrono::steady_clock::now();
-	group *g;
-	if (column_ids.size() == 1) {
-		g = group_by_dispatch(table, column_ids[0]);
-	} else  {
-		g = group_by_parallel_multiple(table, column_ids);
-	}
-	print_time(begin);
-	return g;
+    printf("TASK: grouping by %s. (building all group_by columns and NOT counting them)\n", column_ids.size() == 1 ? "single column" : "multiple columns");
+    auto begin = std::chrono::steady_clock::now();
+    group *g;
+    if (column_ids.size() == 1) {
+        g = group_by_dispatch(table, column_ids[0]);
+    } else  {
+        g = group_by_parallel_multiple(table, column_ids);
+    }
+    print_time(begin);
+    return g;
 }
 
 #endif
