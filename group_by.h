@@ -31,6 +31,7 @@ struct group {
 struct position {
     int row_index; // TODO like in sort? without array?
     std::vector<std::shared_ptr<arrow::Array>> *arrays;
+
     bool operator==(const position& other) const {
         for (int i = 0; i < (*arrays).size(); i++) {
             // RangeEquals doesn't work
@@ -45,11 +46,16 @@ struct position {
         // Compute individual hash values for two data members and combine them using XOR and bit shifting
         size_t answer = 0;
         for (int i = 0; i < arrays->size(); i++) { // TODO predefine type somehow
-            if ((*arrays)[i]->type_id() == arrow::Type::STRING) {
-                auto array = std::static_pointer_cast<arrow::StringArray>((*arrays)[i]);
+            auto &row = (*arrays)[i];
+            if (row->type_id() == arrow::Type::STRING) {
+                auto array = std::static_pointer_cast<arrow::StringArray>(row);
                 answer ^= std::hash<std::string>()(array->GetString(row_index));
-            } else { // TODO for double type
-                auto array = std::static_pointer_cast<arrow::Int64Array>((*arrays)[i]);
+            } else if (row->type_id() == arrow::Type::DOUBLE) {
+                auto array = std::static_pointer_cast<arrow::DoubleArray>(row);
+                answer ^= std::hash<double>()(array->Value(row_index));
+                //TODO answer ^= ((hash<float>()(k.getM()) ^ (hash<float>()(k.getC()) << 1)) >> 1);
+            } else {
+                auto array = std::static_pointer_cast<arrow::Int64Array>(row);
                 answer ^= std::hash<int64_t>()(array->Value(row_index));
                 //TODO answer ^= ((hash<float>()(k.getM()) ^ (hash<float>()(k.getC()) << 1)) >> 1);
             }
@@ -115,18 +121,22 @@ group* group_by_parallel_multiple(std::shared_ptr<arrow::Table> table, std::vect
     std::vector<std::vector<std::shared_ptr<arrow::Array>>> all_arrays(num_chunks);
     mult_group_map_t pg(2048);
 
-    //tbb::parallel_for(0, num_chunks, [](int i) {
     for(int i = 0; i < num_chunks; i++) {
         auto &chunk = all_arrays[i];
-        auto &redir = g->redirection[i];
-        redir.resize(column0->chunk(i)->length());
         for (int j = 0; j < column_ids.size(); j++) {
             chunk.push_back(table->column(column_ids[j])->data()->chunk(i));
         }
-        // TBB in parallel for all available chunks or sequential for each incoming chunk
+    }
+#if 1 //USE_TBB
+    tbb::parallel_for(0, num_chunks, [&,g,column0](int i) {
+    //for(int i = 0; i < num_chunks; i++) {
+    //for(int i = num_chunks-1; i >= 0; i--) {
+        auto &chunk = all_arrays[i];
+        auto &redir = g->redirection[i];
+        redir.resize(column0->chunk(i)->length());
         group_by_sequential_multiple(&chunk, redir, g, &pg, i);
-    }//);
-
+    });
+#endif
     for (int i = 0; i < column_ids.size(); i++) {
       std::shared_ptr<arrow::ChunkedArray> ca = table->column(column_ids[i])->data();
       std::shared_ptr<arrow::Array> data;
