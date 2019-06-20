@@ -68,7 +68,7 @@ struct position {
 #if 1 //USE_TBB
 struct mult_group_map_t : public tbb::concurrent_hash_map<position, int> {
   using tbb::concurrent_hash_map<position, int>::concurrent_hash_map;
-#if 0
+#if TBB_INTERFACE_VERSION < 11007
   const_pointer fast_find(const position& k) {
     return internal_fast_find(k);
   }
