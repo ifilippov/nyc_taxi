@@ -103,7 +103,7 @@ struct aggregate_types {
         }
         std::shared_ptr<arrow::Array> operator()(std::shared_ptr<arrow::ChunkedArray> column, group *gb, aggregate_task *task) {
             int N = 10;
-            int s = gb != NULL ? gb->max_index : 1;
+            int s = gb != NULL ? gb->get_max_index() : 1;
             auto init = [task,s]{return partial_aggregate_task<T>{task, std::vector<T>(s), std::vector<T>(s)};};
             tbb::enumerable_thread_specific<partial_aggregate_task<T>> p_tasks(init); // TODO: argument initializer instead
             // for all available chunks or sequential for each incoming chunk
