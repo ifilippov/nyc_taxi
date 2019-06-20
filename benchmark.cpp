@@ -55,7 +55,8 @@ taxi3(std::shared_ptr<arrow::Table> table) {
 	auto taxi3_table = transform<int64_t, int64_t, arrow::TimestampArray, arrow::Int64Builder>(table, 2, year);
 	group *taxi3_group_by = group_by(taxi3_table, {2, 10});
 	aggregate_task taxi3_task = {count, 0};
-	return aggregate(taxi3_table, taxi3_group_by, {&taxi3_task});
+	auto a = aggregate(taxi3_table, taxi3_group_by, {&taxi3_task});
+  return sort(a, {0, 1}, {asc, asc}, flat); // Only one chunk for sort here, not a good checking - see sortAll
 }
 
 std::shared_ptr<arrow::Table>
@@ -80,7 +81,7 @@ taxi4(std::shared_ptr<arrow::Table> table) {
 	aggregate_task taxi4_task = {count, 0};
 	auto taxi4_table2 = aggregate(taxi4_table1, taxi4_group_by, {&taxi4_task});
 	// numbers of columns are completely different here
-	return sort(taxi4_table2, {0, 3}, {asc, desc}, flat); // Only one chunk for sort here, not a good checking - see sortAll
+	return sort(taxi4_table2, {0, 1, 2, 3}, {asc, asc, asc, desc}, flat); // Only one chunk for sort here, not a good checking - see sortAll
 }
 
 void perf(std::shared_ptr<arrow::Table> table) {
