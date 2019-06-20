@@ -64,8 +64,8 @@ std::shared_ptr<arrow::Table> index123::table;
 
 bool index123_compare(index123 a, index123 b) {
 	for (int i = 0; i < index123::column_ids.size(); i++) {
-		auto arrayA = index123::table->column(index123::column_ids[i])->data()->chunk(a.chunkI);
-		auto arrayB = index123::table->column(index123::column_ids[i])->data()->chunk(b.chunkI);
+		auto *arrayA = index123::table->column(index123::column_ids[i])->data()->chunk(a.chunkI).get();
+		auto *arrayB = index123::table->column(index123::column_ids[i])->data()->chunk(b.chunkI).get();
 		int result = compare(arrayA, a.elemI, arrayB, b.elemI);
 
 		if (result < 0) {

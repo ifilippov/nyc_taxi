@@ -11,6 +11,7 @@
 #include <util.h>
 #include <tbb/tbb.h>
 #include <atomic>
+#include <cassert>
 
 //++++++++++++++++++++++++++++++
 // GROUP BY
@@ -30,7 +31,7 @@ struct group {
 // For multiple columns
 struct position {
     int row_index; // TODO like in sort? without array?
-    std::vector<std::shared_ptr<arrow::Array>> *arrays;
+    std::vector<arrow::Array*> *arrays;
 
     bool operator==(const position& other) const {
         for (int i = 0; i < (*arrays).size(); i++) {
@@ -46,16 +47,16 @@ struct position {
         // Compute individual hash values for two data members and combine them using XOR and bit shifting
         size_t answer = 0;
         for (int i = 0; i < arrays->size(); i++) { // TODO predefine type somehow
-            auto &row = (*arrays)[i];
+            arrow::Array *row = (*arrays)[i];
             if (row->type_id() == arrow::Type::STRING) {
-                auto array = std::static_pointer_cast<arrow::StringArray>(row);
+                auto array = (arrow::StringArray*)row;
                 answer ^= std::hash<std::string>()(array->GetString(row_index));
             } else if (row->type_id() == arrow::Type::DOUBLE) {
-                auto array = std::static_pointer_cast<arrow::DoubleArray>(row);
+                auto array = (arrow::DoubleArray*)row;
                 answer ^= std::hash<double>()(array->Value(row_index));
                 //TODO answer ^= ((hash<float>()(k.getM()) ^ (hash<float>()(k.getC()) << 1)) >> 1);
             } else {
-                auto array = std::static_pointer_cast<arrow::Int64Array>(row);
+                auto array = (arrow::Int64Array*)row;
                 answer ^= std::hash<int64_t>()(array->Value(row_index));
                 //TODO answer ^= ((hash<float>()(k.getM()) ^ (hash<float>()(k.getC()) << 1)) >> 1);
             }
@@ -65,18 +66,51 @@ struct position {
 };
 
 #if 1 //USE_TBB
-typedef tbb::concurrent_hash_map<position, int> mult_group_map_t;
+struct mult_group_map_t : public tbb::concurrent_hash_map<position, int> {
+  using tbb::concurrent_hash_map<position, int>::concurrent_hash_map;
+#if 0
+  const_pointer fast_find(const position& k) {
+    return internal_fast_find(k);
+  }
+#else
+  const_pointer fast_find( const key_type& key ) const {
+      hashcode_t h = my_hash_compare.hash( key );
+      hashcode_t m = (hashcode_t) itt_load_word_with_acquire( my_mask );
+      node *n;
+  restart:
+      __TBB_ASSERT((m&(m+1))==0, "data structure is invalid");
+      bucket *b = get_bucket( h & m );
+      // TODO: actually, notification is unnecessary here, just hiding double-check
+      if( itt_load_word_with_acquire(b->node_list) == tbb::interface5::internal::rehash_req )
+      {
+          assert(false); // TODO
+      }
+      n = search_bucket( key, b );
+      if( n )
+          return n->storage();
+      else if( check_mask_race( h, m ) )
+          goto restart;
+      return 0;
+  }
+#endif
+};
 
-void group_by_sequential_multiple( std::vector<std::shared_ptr<arrow::Array>> *arrays
+void group_by_sequential_multiple( std::vector<arrow::Array*> *arrays
                                  , std::vector<int> &redir, group *g, mult_group_map_t* pg, int n) {
+    position p{0, arrays};
     for (int i = 0, end_i = (*arrays)[0]->length(); i < end_i; i++) {
-        position p{i, arrays}; // TODO copy constructor? move constructor?
-        mult_group_map_t::accessor a;
-        bool uniq = pg->insert(a, p);
-        if (!uniq) {
-            redir[i] = a->second;
-        } else {
-            a->second = redir[i] = g->increment_index();
+        p.row_index = i;
+        auto *x = pg->fast_find(p);
+        if(x && x->second >= 0)
+            redir[i] = x->second;
+        else {
+            mult_group_map_t::accessor a;
+            bool uniq = pg->insert(a, {p, -1});
+            if (!uniq) {
+                redir[i] = a->second;
+            } else {
+                a->second = redir[i] = g->increment_index();
+            }
         }
     }
 }
@@ -118,13 +152,13 @@ group* group_by_parallel_multiple(std::shared_ptr<arrow::Table> table, std::vect
     int num_chunks = column0->num_chunks();
 
     auto *g = new group{num_chunks};
-    std::vector<std::vector<std::shared_ptr<arrow::Array>>> all_arrays(num_chunks);
+    std::vector<std::vector<arrow::Array*>> all_arrays(num_chunks);
     mult_group_map_t pg(2048);
 
     for(int i = 0; i < num_chunks; i++) {
         auto &chunk = all_arrays[i];
         for (int j = 0; j < column_ids.size(); j++) {
-            chunk.push_back(table->column(column_ids[j])->data()->chunk(i));
+            chunk.push_back(table->column(column_ids[j])->data()->chunk(i).get());
         }
     }
 #if 1 //USE_TBB
@@ -143,19 +177,19 @@ group* group_by_parallel_multiple(std::shared_ptr<arrow::Table> table, std::vect
       if (ca->type()->id() == arrow::Type::STRING) {
         std::vector<std::string> new_column(pg.size());
         for (auto j = pg.begin(); j != pg.end(); j++) {
-          new_column[j->second] = (std::static_pointer_cast<arrow::StringArray>((*j->first.arrays)[i]))->GetString(j->first.row_index);
+          new_column[j->second] = ((arrow::StringArray*)((*j->first.arrays)[i]))->GetString(j->first.row_index);
         }
         data = vector_to_array<std::string, arrow::StringBuilder>(new_column);
       } else if (ca->type()->id() == arrow::Type::INT64) {
         std::vector<int64_t> new_column(pg.size());
         for (auto j = pg.begin(); j != pg.end(); j++) {
-          new_column[j->second] = (std::static_pointer_cast<arrow::Int64Array>((*j->first.arrays)[i]))->Value(j->first.row_index);
+          new_column[j->second] = ((arrow::Int64Array*)((*j->first.arrays)[i]))->Value(j->first.row_index);
         }
         data = vector_to_array<arrow::Int64Type::c_type, arrow::Int64Builder>(new_column);
       } else {
         std::vector<double> new_column(pg.size());
         for (auto j = pg.begin(); j != pg.end(); j++) {
-          new_column[j->second] = (std::static_pointer_cast<arrow::DoubleArray>((*j->first.arrays)[i]))->Value(j->first.row_index);
+          new_column[j->second] = ((arrow::DoubleArray*)((*j->first.arrays)[i]))->Value(j->first.row_index);
         }
         data = vector_to_array<arrow::DoubleType::c_type, arrow::DoubleBuilder>(new_column);
       }

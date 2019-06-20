@@ -3,11 +3,11 @@
 
 #include <arrow/api.h>
 
-int compare(std::shared_ptr<arrow::Array> a, int ai, std::shared_ptr<arrow::Array> b, int bi) {
+int compare(arrow::Array* a, int ai, arrow::Array* b, int bi) {
 	switch (a->type_id()) {
 	case arrow::Type::STRING: {
-		auto left = std::static_pointer_cast<arrow::StringArray>(a) -> GetString(ai);
-		auto right = std::static_pointer_cast<arrow::StringArray>(b) -> GetString(bi);
+		auto left = ((arrow::StringArray*)a) -> GetString(ai);
+		auto right = ((arrow::StringArray*)b) -> GetString(bi);
 		if  (left > right) {
 			return 1;
 		} else if (left == right) {
@@ -16,8 +16,8 @@ int compare(std::shared_ptr<arrow::Array> a, int ai, std::shared_ptr<arrow::Arra
 		return -1;
 	}
 	case arrow::Type::INT64: {
-		auto left = std::static_pointer_cast<arrow::Int64Array>(a) -> Value(ai);
-		auto right = std::static_pointer_cast<arrow::Int64Array>(b) -> Value(bi);
+		auto left = ((arrow::Int64Array*)a) -> Value(ai);
+		auto right = ((arrow::Int64Array*)b) -> Value(bi);
 		if (left > right) {
 			return 1;
 		} else if (left == right) {
@@ -26,8 +26,8 @@ int compare(std::shared_ptr<arrow::Array> a, int ai, std::shared_ptr<arrow::Arra
 		return -1;
 	}
 	case arrow::Type::DOUBLE: {
-		auto left = std::static_pointer_cast<arrow::DoubleArray>(a) -> Value(ai);
-		auto right = std::static_pointer_cast<arrow::DoubleArray>(b) -> Value(bi);
+		auto left = ((arrow::DoubleArray*)a) -> Value(ai);
+		auto right = ((arrow::DoubleArray*)b) -> Value(bi);
 		if (left > right) {
 			return 1;
 		} else if (left == right) {
