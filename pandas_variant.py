@@ -52,10 +52,10 @@ def taxi4(df):
 
 def measurement(a, table):
 	b = datetime.datetime.now()
-	print "DONE!", (b - a).seconds, "seconds /", (b - a).seconds * 1000 + (b - a).microseconds / 1000, "milliseconds"
+	print("DONE!", (b - a).seconds, "seconds /", (b - a).seconds * 1000 + (b - a).microseconds / 1000, "milliseconds")
 	if table is not None:
-		print "\n***RESULT***"
-		print table.to_string(index = False, header = False)
+		print("\n***RESULT***")
+		print(table.to_string(index = False, header = False))
 	return datetime.datetime.now()
 
 filename = 'trips_xaa.csv'

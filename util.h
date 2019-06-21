@@ -41,7 +41,7 @@ int compare(arrow::Array* a, int ai, arrow::Array* b, int bi) {
 }
 
 template <typename T, typename T2>
-T get_value(std::shared_ptr<T2> array, int i) {
+T get_value(T2* array, int i) {
 	if constexpr (std::is_same<T2, arrow::StringArray>::value) {
 		return array->GetString(i);
 	} else {

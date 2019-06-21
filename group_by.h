@@ -66,37 +66,42 @@ struct position {
 };
 
 #if 1 //USE_TBB
-struct mult_group_map_t : public tbb::concurrent_hash_map<position, int> {
-  using tbb::concurrent_hash_map<position, int>::concurrent_hash_map;
+template<typename K>
+struct group_map : public tbb::concurrent_hash_map<K, int> {
+  using base_t=tbb::concurrent_hash_map<K, int>;
+  using base_t::concurrent_hash_map;
 #if TBB_INTERFACE_VERSION < 11007
-  const_pointer fast_find(const position& k) {
-    return internal_fast_find(k);
+  typename base_t::const_pointer fast_find(const typename base_t::key_type& k) {
+    return this->internal_fast_find(k);
   }
 #else
-  const_pointer fast_find( const key_type& key ) const {
-      hashcode_t h = my_hash_compare.hash( key );
-      hashcode_t m = (hashcode_t) itt_load_word_with_acquire( my_mask );
-      node *n;
+  typename base_t::const_pointer fast_find( const typename base_t::key_type& key ) const {
+      typedef typename base_t::hashcode_t hashcode_t;
+      hashcode_t h = this->my_hash_compare.hash( key );
+      hashcode_t m = (hashcode_t) itt_load_word_with_acquire( this->my_mask );
+      typename base_t::node *n;
   restart:
       __TBB_ASSERT((m&(m+1))==0, "data structure is invalid");
-      bucket *b = get_bucket( h & m );
+      auto *b = this->get_bucket( h & m );
       // TODO: actually, notification is unnecessary here, just hiding double-check
       if( itt_load_word_with_acquire(b->node_list) == tbb::interface5::internal::rehash_req )
       {
           assert(false); // TODO
       }
-      n = search_bucket( key, b );
+      n = this->search_bucket( key, b );
       if( n )
           return n->storage();
-      else if( check_mask_race( h, m ) )
+      else if( this->check_mask_race( h, m ) )
           goto restart;
       return 0;
   }
 #endif
 };
 
+typedef group_map<position> mult_group_map_t;
+
 void group_by_sequential_multiple( std::vector<arrow::Array*> *arrays
-                                 , std::vector<int> &redir, group *g, mult_group_map_t* pg, int n) {
+                                 , std::vector<int> &redir, group *g, mult_group_map_t* pg) {
     position p{0, arrays};
     for (int i = 0, end_i = (*arrays)[0]->length(); i < end_i; i++) {
         p.row_index = i;
@@ -168,7 +173,7 @@ group* group_by_parallel_multiple(std::shared_ptr<arrow::Table> table, std::vect
         auto &chunk = all_arrays[i];
         auto &redir = g->redirection[i];
         redir.resize(column0->chunk(i)->length());
-        group_by_sequential_multiple(&chunk, redir, g, &pg, i);
+        group_by_sequential_multiple(&chunk, redir, g, &pg);
     });
 #endif
     for (int i = 0; i < column_ids.size(); i++) {
@@ -201,49 +206,74 @@ group* group_by_parallel_multiple(std::shared_ptr<arrow::Table> table, std::vect
 }
 
 // For single column
-template <typename T, typename T4>
-struct partial_single_group {
-    group *g;
-    std::unordered_map<T, int> map;
-};
 
-template <typename T, typename T2, typename T4>
-void group_by_sequential_single(std::shared_ptr<T2> array, partial_single_group<T, T4>* pg) {
-    int s = pg->g->redirection.size();
-    pg->g->redirection.push_back(std::vector<int>(0));
-    for (int i = 0; i < array->length(); i++) {
-        T value = get_value<T, T2>(array, i);
-        auto number = pg->map.find(value);
-        if (number != pg->map.end()) {
-            pg->g->redirection[s].push_back(number->second);
-        } else {
-            pg->g->redirection[s].push_back(pg->map.size());
-            pg->map.insert({value, pg->map.size()});
+#if 1 //USE_TBB
+template <typename T, typename T2>
+void group_by_sequential_single( T2 *array, std::vector<int> &redir, group *g, group_map<T>* pg) {
+    for (int i = 0, end_i = array->length(); i < end_i; i++) {
+        T key = get_value<T, T2>(array, i);
+        auto *x = pg->fast_find(key);
+        if(x && x->second >= 0)
+            redir[i] = x->second;
+        else {
+            typename group_map<T>::accessor a;
+            bool uniq = pg->insert(a, typename group_map<T>::value_type{key, -1});
+            if (!uniq) {
+                redir[i] = a->second;
+            } else {
+                auto idx = g->increment_index();
+                a->second = idx;
+                redir[i] = idx;
+            }
         }
     }
 }
 
+#else
+
+template <typename T, typename T2>
+void group_by_sequential_single(T2* array, group *g, group_map<T>* pg) {
+    int s = g->redirection.size();
+    for (int i = 0; i < array->length(); i++) {
+        T value = get_value<T, T2>(array, i);
+        auto number = pg->find(value);
+        if (number != pg->end()) {
+            g->redirection[s].push_back(number->second);
+        } else {
+            g->redirection[s].push_back(pg->size());
+            pg->insert({value, pg->size()});
+        }
+    }
+}
+#endif
+
 template <typename T, typename T2, typename T4>
 group* group_by_parallel_single(std::shared_ptr<arrow::Column> column) {
-    partial_single_group<T, T4> pg = {new(group)};
-    for (int i = 0; i < column->data()->num_chunks(); i++) {
-        auto array = std::static_pointer_cast<T2>(column->data()->chunk(i));
-        // TBB in parallel for all available chunks or sequential for each incoming chunk
-        group_by_sequential_single<T, T2, T4>(array, &pg);
-    }
-    pg.g->max_index = pg.map.size();
+    group_map<T> pg(2048);
+    auto *ca = column->data().get();
+    int num_chunks = ca->num_chunks();
+    auto *g = new group(num_chunks);
+
+    //for (int i = 0; i < num_chunks; i++) {
+    tbb::parallel_for(0, num_chunks, [&,ca,g](int i) {
+        T2 *array = (T2*)ca->chunk(i).get();
+        auto &redir = g->redirection[i];
+        redir.resize(array->length());
+        group_by_sequential_single<T, T2>(array, redir, g, &pg);
+    } );
+    assert(g->max_index == pg.size());
 
     std::shared_ptr<arrow::Array> data;
-    std::vector<T> new_column(pg.map.size());
-    for (auto j = pg.map.begin(); j != pg.map.end(); j++) {
+    std::vector<T> new_column(pg.size());
+    for (auto j = pg.begin(); j != pg.end(); j++) {
         new_column[j->second] = j->first;
     }
     data = vector_to_array<T, T4>(new_column);
     std::shared_ptr<arrow::Field> field = column->field();
-    pg.g->columns.push_back(std::make_shared<arrow::Column>(field->name(), data));
-    pg.g->fields.push_back(field);
+    g->columns.push_back(std::make_shared<arrow::Column>(field->name(), data));
+    g->fields.push_back(field);
 
-    return pg.g;
+    return g;
 }
 
 group* group_by_dispatch(std::shared_ptr<arrow::Table> table, int column_id) {
