@@ -26,9 +26,8 @@ template <typename T, typename T2>
 std::vector<T> *build_vector(std::shared_ptr<arrow::ChunkedArray> column, std::vector<index123>* r) {
 	std::vector<T> *result = new std::vector<T>(r->size());
 	for (int i = 0; i < r->size(); i++) { // TODO only for one chunk currently
-		auto array = std::static_pointer_cast<T2>(column->chunk((*r)[i].chunkI));
-		T value = get_value<T, T2>(array, (*r)[i].elemI);
-		(*result)[i] = value;
+		auto *array = (T2*)column->chunk((*r)[i].chunkI).get();
+		(*result)[i] = get_value<T, T2>(array, (*r)[i].elemI);
 	}
 	return result;
 }
@@ -156,8 +155,7 @@ std::vector<tuple<T>> *sort_sequential_single(std::shared_ptr<T2> array, int chu
 	std::vector<tuple<T>> *result = new std::vector<tuple<T>>(array->length());
 	// TODO array_to_vector?
 	for (int i = 0; i < array->length(); i++) {
-		T value = get_value<T, T2>(array, i);
-		(*result)[i] = tuple<T>{value, index123{chunk_number, i}};
+		(*result)[i] = tuple<T>{get_value<T, T2>(array.get(), i), index123{chunk_number, i}};
 	}
 	std::sort(result->begin(), result->end(), t == desc ? tuple_compare_desc<T> : tuple_compare_asc<T>);
 	return result;
