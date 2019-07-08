@@ -5,6 +5,7 @@
 
 #include <arrow/pretty_print.h>
 #include <iostream>
+#include <sstream>
 #include <chrono>
 
 //++++++++++++++++++++++++++++++

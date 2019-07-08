@@ -11,21 +11,26 @@
 // LOAD CSV
 //++++++++++++++++++++++++++++++
 
-std::shared_ptr<arrow::Table> load_csv(std::string path, bool threads) {
+std::shared_ptr<arrow::Table> load_csv(std::string path, bool threads, int bsz = 8*1024*1024) {
 	printf("TASK: loading CSV file using %s.\n", threads ? "multiple threads" : "single thread");
 	auto begin = std::chrono::steady_clock::now();
 
 	auto popt = arrow::csv::ParseOptions::Defaults();
-	auto ropt = arrow::csv::ReadOptions::Defaults();
+	popt.quoting = false;
+  popt.newlines_in_values = false;
+
+  auto ropt = arrow::csv::ReadOptions::Defaults();
 	ropt.use_threads = threads;
+	ropt.block_size = bsz;
+
 	auto copt = arrow::csv::ConvertOptions::Defaults();
-	auto memp = arrow::MemoryPool::CreateDefault();
+	auto memp = arrow::default_memory_pool();
 
  	std::shared_ptr<arrow::io::ReadableFile> inp;
 	auto r = arrow::io::ReadableFile::Open(path, &inp); // TODO check existence
 
 	std::shared_ptr<arrow::csv::TableReader> tp;
-	r = arrow::csv::TableReader::Make(memp.get(), inp, ropt, popt, copt, &tp);
+	r = arrow::csv::TableReader::Make(memp, inp, ropt, popt, copt, &tp);
 
 	std::shared_ptr<arrow::Table> out;
 	r = tp->Read(&out);

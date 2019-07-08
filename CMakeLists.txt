@@ -15,8 +15,8 @@ find_package(TBB REQUIRED tbb)
 target_compile_features(bench PRIVATE cxx_std_17)
 target_include_directories(bench PRIVATE .
                            ${CMAKE_INSTALL_PREFIX}/include)
-
+link_directories(${CONDA_PREFIX}/lib)
 target_link_libraries(bench arrow_shared
                       ${TBB_IMPORTED_TARGETS}
-#                      ${arrow_IMPORTED_TARGETS}    # Link imported targets
+                      ${arrow_IMPORTED_TARGETS}    # Link imported targets
                       ${CMAKE_DL_LIBS})  # Link "rt" library on Linux
