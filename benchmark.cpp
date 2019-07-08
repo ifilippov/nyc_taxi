@@ -111,9 +111,13 @@ void perf(std::shared_ptr<arrow::Table> table) {
 }
 
 int main(int argc, char** argv) {
+    //arrow::SetCpuThreadPoolCapacity(20);
 	printf("\nThread number: %d\n\n", arrow::GetCpuThreadPoolCapacity());
 
-	auto table = load_csv(argc > 1 ? argv[1] : "trips_xaa.csv", true);
+    int bsz = 640*1024;
+    if(argc>2) bsz = atoi(argv[2]);
+
+	auto table = load_csv(argc > 1 ? argv[1] : "trips_xaa.csv", true, bsz);
 	//table = load_csv(argc > 1 ? argv[1] : "trips_xaa.csv", false);
 
 	//  2 - pickup_datetime
