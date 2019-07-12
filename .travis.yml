@@ -4,7 +4,7 @@ branches:
   only:
   - master
 install:
-  - source conda/activate.sh
+  - source conda/activate-conda.sh
   - conda env create -n arrow-def --force -f conda/default-env.yml
 script:
   - conda activate arrow-def
