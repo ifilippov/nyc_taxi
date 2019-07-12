@@ -228,6 +228,7 @@ std::shared_ptr<arrow::Table> sort_dispatch(std::shared_ptr<arrow::Table> table,
 }
 
 // Main function
+// XXX: there is a bug.. but works in most cases and it is non-goal to fix it now
 std::shared_ptr<arrow::Table> sort(std::shared_ptr<arrow::Table> table, std::vector<int> column_ids, std::vector<sort_direction> t, sort_type type) {
 	printf("TASK: sorting (%s merge) by %s.\n", type == flat ? "flat" : "tree", column_ids.size() == 1 ? "single column" : "multiple columns");
 	auto begin = std::chrono::steady_clock::now();

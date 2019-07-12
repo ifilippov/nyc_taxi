@@ -1,0 +1,14 @@
+language: c
+dist: xenial
+branches:
+  only:
+  - master
+install:
+  - source conda/activate.sh
+  - conda env create -n arrow-def --force -f conda/default-env.yml
+script:
+  - conda activate arrow-def
+  - rm -rf ../build
+  - cmake -GNinja -DCMAKE_BUILD_TYPE=release -DCMAKE_INSTALL_PREFIX=$CONDA_PREFIX -DBENCH_NO_HUGEPAGES=ON -S . -B ../build
+  - cmake --build ../build
+  - ../build/bench_all trips_test.csv
