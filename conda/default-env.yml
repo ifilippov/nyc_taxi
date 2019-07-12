@@ -1,0 +1,13 @@
+name: arrow-def
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - arrow-cpp
+  - cmake >3.13
+  - gcc_linux-64
+  - gxx_linux-64
+  - jemalloc
+  - tbb-devel
+  - ninja
+
