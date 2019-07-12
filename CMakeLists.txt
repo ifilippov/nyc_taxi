@@ -1,22 +1,43 @@
 cmake_minimum_required(VERSION 3.0.0 FATAL_ERROR)
 
 project(bench CXX)
-add_executable(bench benchmark.cpp)
 
 find_package(arrow REQUIRED arrow_shared)
-find_package(TBB REQUIRED tbb)
+find_package(TBB REQUIRED tbb tbbmalloc tbbmalloc_proxy)
 
-#get_cmake_property(_variableNames VARIABLES)
-#list (SORT _variableNames)
-#foreach (_variableName ${_variableNames})
-#    message(STATUS "${_variableName}=${${_variableName}}")
-#endforeach()
+file(READ /proc/sys/vm/nr_hugepages HPAGES)
+if((NOT HPAGES GREATER 0) AND NOT BENCH_NO_HUGEPAGES)
+  message( FATAL_ERROR "\
+  Huge pages are not configured. Run `sudo bash -c 'echo 30000 > /proc/sys/vm/nr_hugepages'`\n\
+  You can disable this warning by setting BENCH_NO_HUGEPAGES but performance will be worse and blocksize will need tuning for the (second) best performance" )
+endif()
 
-target_compile_features(bench PRIVATE cxx_std_17)
-target_include_directories(bench PRIVATE .
-                           ${CMAKE_INSTALL_PREFIX}/include)
 link_directories(${CONDA_PREFIX}/lib)
-target_link_libraries(bench arrow_shared
-                      ${TBB_IMPORTED_TARGETS}
-                      ${arrow_IMPORTED_TARGETS}    # Link imported targets
-                      ${CMAKE_DL_LIBS})  # Link "rt" library on Linux
+
+add_executable(bench_csv_arrow benchmark.cpp)
+target_compile_features(bench_csv_arrow PRIVATE cxx_std_17)
+target_compile_definitions(bench_csv_arrow PRIVATE BENCH_CSV_ONLY)
+target_include_directories(bench_csv_arrow PRIVATE . ${CMAKE_INSTALL_PREFIX}/include)
+target_link_libraries(bench_csv_arrow arrow_shared TBB::tbb
+                      ${arrow_IMPORTED_TARGETS} ${CMAKE_DL_LIBS})  # Link "rt" library on Linux
+
+add_executable(bench_csv_tbbmalloc benchmark.cpp)
+target_compile_features(bench_csv_tbbmalloc PRIVATE cxx_std_17)
+target_compile_definitions(bench_csv_tbbmalloc PRIVATE BENCH_CSV_ONLY)
+target_include_directories(bench_csv_tbbmalloc PRIVATE . ${CMAKE_INSTALL_PREFIX}/include)
+target_link_libraries(bench_csv_tbbmalloc arrow_shared TBB::tbb TBB::tbbmalloc_proxy
+                      ${arrow_IMPORTED_TARGETS} ${CMAKE_DL_LIBS})  # Link "rt" library on Linux
+
+add_executable(bench_csv_tbbmalloc_huge benchmark.cpp)
+target_compile_features(bench_csv_tbbmalloc_huge PRIVATE cxx_std_17)
+target_compile_definitions(bench_csv_tbbmalloc_huge PRIVATE BENCH_CSV_ONLY BENCH_USE_TBB_HUGE_PAGES)
+target_include_directories(bench_csv_tbbmalloc_huge PRIVATE . ${CMAKE_INSTALL_PREFIX}/include)
+target_link_libraries(bench_csv_tbbmalloc_huge arrow_shared ${TBB_IMPORTED_TARGETS}
+                      ${arrow_IMPORTED_TARGETS} ${CMAKE_DL_LIBS})  # Link "rt" library on Linux
+
+add_executable(bench_all benchmark.cpp)
+target_compile_features(bench_all PRIVATE cxx_std_17)
+target_compile_definitions(bench_all PRIVATE BENCH_USE_TBB_HUGE_PAGES)
+target_include_directories(bench_all PRIVATE . ${CMAKE_INSTALL_PREFIX}/include)
+target_link_libraries(bench_all arrow_shared ${TBB_IMPORTED_TARGETS}
+                      ${arrow_IMPORTED_TARGETS} ${CMAKE_DL_LIBS})  # Link "rt" library on Linux
